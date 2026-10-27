@@ -1,0 +1,685 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
+
+import 'package:crypto/crypto.dart';
+import 'package:flutter/material.dart';
+import 'package:path/path.dart' as path;
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import '../database/cafe_database.dart';
+import '../models/cafe_daily_closing.dart';
+import '../models/cafe_order.dart';
+import '../models/cafe_product.dart';
+import '../models/cafe_sale.dart';
+import '../models/cafe_snapshot.dart';
+import '../models/default_cafe_products.dart';
+
+export '../models/cafe_snapshot.dart';
+
+class CafeRepository {
+  CafeRepository({CafeDatabase? database})
+    : _database = database ?? CafeDatabase.instance;
+  final CafeDatabase _database;
+
+  Future<CafeSnapshot> load() async {
+    final db = await _database.database;
+    await _migrateLegacyJson(db);
+    final orders = await db.query(
+      'cafe_orders',
+      where: 'status = ?',
+      whereArgs: ['open'],
+      orderBy: 'created_at',
+    );
+    final sales = await db.query('cafe_sales', orderBy: 'paid_at DESC');
+    final orderItemsByOrder = _groupRows(
+      await db.query('cafe_order_items'),
+      'order_id',
+    );
+    final roomSessionsByOrder = _groupRows(
+      await db.query('cafe_order_room_sessions', orderBy: 'started_at'),
+      'order_id',
+    );
+    final saleItemsBySale = _groupRows(
+      await db.query('cafe_sale_items'),
+      'sale_id',
+    );
+    final roomSessionsBySale = _groupRows(
+      await db.query('cafe_sale_room_sessions', orderBy: 'started_at'),
+      'sale_id',
+    );
+    final productRows = await db.query(
+      'cafe_products',
+      where: 'is_active = 1',
+      orderBy: 'category, product_name',
+    );
+    final products = productRows.map((row) {
+      final name = row['product_name'] as String;
+      final defaultProduct = cafeProducts
+          .where((product) => product.name == name)
+          .firstOrNull;
+      return CafeProduct(
+        name,
+        row['category'] as String,
+        (row['unit_price'] as num).toDouble(),
+        defaultProduct?.icon ?? Icons.local_cafe,
+        stockUnits: row['stock_units'] as int?,
+        unitsPerCarton: row['units_per_carton'] as int?,
+        purchasePricePerCarton: (row['purchase_price_per_carton'] as num?)
+            ?.toDouble(),
+      );
+    }).toList();
+    final dailyClosings = (await db.query(
+      'cafe_daily_closings',
+      orderBy: 'closed_at DESC',
+    )).map(CafeDailyClosing.fromMap).toList();
+    final orderModels = <CafeOrder>[];
+    for (final row in orders) {
+      final id = row['id'] as String;
+      final itemModels = <CafeOrderItem>[];
+      for (final item in orderItemsByOrder[id] ?? const []) {
+        final name = item['product_name'] as String;
+        itemModels.add(
+          CafeOrderItem(
+            productName: name,
+            quantity: item['quantity'] as int,
+            unitPrice: (item['unit_price'] as num).toDouble(),
+            discountPerUnit:
+                (item['discount_per_unit'] as num?)?.toDouble() ?? 0,
+          ),
+        );
+      }
+      orderModels.add(
+        CafeOrder(
+          id: id,
+          label: row['label'] as String,
+          tableNumber: row['table_number'] as int?,
+          roomNumber: row['room_number'] as int?,
+          isTakeaway: (row['is_takeaway'] as int) == 1,
+          items: itemModels,
+          createdAt:
+              DateTime.tryParse(row['created_at'] as String) ?? DateTime.now(),
+          roomSessions: (roomSessionsByOrder[id] ?? const [])
+              .map(_roomSessionFromMap)
+              .toList(),
+        ),
+      );
+    }
+
+    final saleModels = <CafeSale>[];
+    for (final row in sales) {
+      final id = row['id'] as int;
+      final items = saleItemsBySale['$id'] ?? const <Map<String, Object?>>[];
+      final summary = <String, int>{};
+      for (final item in items) {
+        final productName = item['product_name'] as String;
+        final discount = (item['discount_per_unit'] as num?)?.toDouble() ?? 0;
+        final displayName = discount > 0
+            ? '$productName (خصم ${discount.toStringAsFixed(2)} للوحدة)'
+            : productName;
+        summary.update(
+          displayName,
+          (quantity) => quantity + (item['quantity'] as int),
+          ifAbsent: () => item['quantity'] as int,
+        );
+      }
+      final roomCharge = (row['room_charge'] as num?)?.toDouble() ?? 0;
+      final roomSessions = (roomSessionsBySale['$id'] ?? const [])
+          .map(_roomSessionFromMap)
+          .toList();
+      if (roomCharge > 0 && roomSessions.isEmpty) {
+        final minutes = row['room_minutes'] as int? ?? 0;
+        summary['حجز بلايستيشن (${_formatDuration(minutes)})'] = 1;
+      } else {
+        for (final session in roomSessions) {
+          final sessionEnd = session.endedAt ?? DateTime.now();
+          summary.update(
+            'بلايستيشن ${session.mode == 'multi' ? 'Multi' : 'Single'} • ${_formatTimestamp(session.startedAt)}-${_formatTimestamp(sessionEnd)} • ${_formatDuration(session.durationMinutesAt(sessionEnd))} • ${session.chargeAt(sessionEnd).toStringAsFixed(2)} ج.م',
+            (count) => count + 1,
+            ifAbsent: () => 1,
+          );
+        }
+      }
+      saleModels.add(
+        CafeSale(
+          id: id,
+          label: row['label'] as String,
+          total: (row['total'] as num).toDouble(),
+          time: DateTime.tryParse(row['paid_at'] as String) ?? DateTime.now(),
+          items: summary,
+          roomSessions: roomSessions,
+          roomCharge: (row['room_charge'] as num?)?.toDouble() ?? 0,
+          roomMinutes: row['room_minutes'] as int? ?? 0,
+          roomStartedAt: roomSessions.isEmpty
+              ? DateTime.tryParse(row['room_started_at'] as String? ?? '')
+              : roomSessions.first.startedAt,
+          roomEndedAt: roomSessions.isEmpty
+              ? DateTime.tryParse(row['room_ended_at'] as String? ?? '')
+              : roomSessions.last.endedAt,
+        ),
+      );
+    }
+    final settings = await db.query(
+      'cafe_settings',
+      where: 'setting_key = ?',
+      whereArgs: ['table_count'],
+      limit: 1,
+    );
+    final tableCount = settings.isEmpty
+        ? 16
+        : int.tryParse(settings.first['setting_value'] as String) ?? 16;
+    final rateRows = await db.query(
+      'cafe_settings',
+      where: "setting_key LIKE 'room_%'",
+    );
+    final roomHourlyRates = <String, double>{
+      for (var room = 1; room <= 2; room++)
+        for (final mode in ['single', 'multi']) 'room_${room}_$mode': 40,
+    };
+    for (final row in rateRows) {
+      final key = row['setting_key'] as String;
+      final value = double.tryParse(row['setting_value'] as String);
+      if (value != null && value > 0) roomHourlyRates[key] = value;
+    }
+    return CafeSnapshot(
+      orders: orderModels,
+      sales: saleModels,
+      products: products,
+      tableCount: tableCount,
+      roomHourlyRates: roomHourlyRates,
+      dailyClosings: dailyClosings,
+    );
+  }
+
+  Future<void> saveOrder(CafeOrder order) async {
+    final db = await _database.database;
+    await db.transaction((txn) async {
+      await txn.insert('cafe_orders', {
+        'id': order.id,
+        'label': order.label,
+        'table_number': order.tableNumber,
+        'room_number': order.roomNumber,
+        'is_takeaway': order.isTakeaway ? 1 : 0,
+        'created_at': order.createdAt.toIso8601String(),
+        'room_started_at': order.roomStartedAt?.toIso8601String(),
+        'room_ended_at': order.roomEndedAt?.toIso8601String(),
+        'room_pricing_mode': order.roomPricingMode,
+        'room_price': order.roomPrice,
+        'status': 'open',
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.delete(
+        'cafe_order_room_sessions',
+        where: 'order_id = ?',
+        whereArgs: [order.id],
+      );
+      for (final session in order.roomSessions) {
+        await txn.insert('cafe_order_room_sessions', {
+          'id': session.id,
+          'order_id': order.id,
+          'mode': session.mode,
+          'hourly_rate': session.hourlyRate,
+          'fixed_charge': session.legacyFixedCharge,
+          'started_at': session.startedAt.toIso8601String(),
+          'ended_at': session.endedAt?.toIso8601String(),
+        });
+      }
+      await txn.delete(
+        'cafe_order_items',
+        where: 'order_id = ?',
+        whereArgs: [order.id],
+      );
+      for (final item in order.items) {
+        final product = await txn.query(
+          'cafe_products',
+          columns: ['unit_price'],
+          where: 'product_name = ? AND is_active = 1',
+          whereArgs: [item.productName],
+          limit: 1,
+        );
+        final catalogPrice = product.isEmpty
+            ? null
+            : (product.first['unit_price'] as num).toDouble();
+        final price = item.unitPrice > 0 ? item.unitPrice : catalogPrice;
+        if (price == null || item.quantity <= 0) continue;
+        await txn.insert('cafe_order_items', {
+          'order_id': order.id,
+          'product_name': item.productName,
+          'quantity': item.quantity,
+          'unit_price': price,
+          'discount_per_unit': item.discountPerUnit,
+        });
+      }
+    });
+  }
+
+  Future<void> completeSale(CafeOrder order) async {
+    final db = await _database.database;
+    await db.transaction((txn) async {
+      final now = DateTime.now();
+      final saleId = await txn.insert('cafe_sales', {
+        'label': order.label,
+        'total': order.total,
+        'paid_at': now.toIso8601String(),
+        'room_charge': order.roomCharge,
+        'room_minutes': order.roomDurationMinutesAt(now),
+        'room_started_at': order.roomStartedAt?.toIso8601String(),
+        'room_ended_at': order.roomEndedAt?.toIso8601String(),
+      });
+      for (final session in order.roomSessions) {
+        await txn.insert('cafe_sale_room_sessions', {
+          'id': session.id,
+          'sale_id': saleId,
+          'mode': session.mode,
+          'hourly_rate': session.hourlyRate,
+          'fixed_charge': session.legacyFixedCharge,
+          'started_at': session.startedAt.toIso8601String(),
+          'ended_at': (session.endedAt ?? now).toIso8601String(),
+        });
+      }
+      for (final item in order.items) {
+        final product = await txn.query(
+          'cafe_products',
+          columns: ['unit_price'],
+          where: 'product_name = ?',
+          whereArgs: [item.productName],
+          limit: 1,
+        );
+        final catalogPrice = product.isEmpty
+            ? null
+            : (product.first['unit_price'] as num).toDouble();
+        final price = item.unitPrice > 0 ? item.unitPrice : catalogPrice;
+        if (price == null) continue;
+        final stockRows = await txn.query(
+          'cafe_products',
+          columns: ['stock_units'],
+          where: 'product_name = ?',
+          whereArgs: [item.productName],
+          limit: 1,
+        );
+        if (stockRows.isNotEmpty && stockRows.first['stock_units'] != null) {
+          final available = stockRows.first['stock_units'] as int;
+          if (available < item.quantity) {
+            throw StateError(
+              'الكمية المتاحة من ${item.productName} هي $available فقط',
+            );
+          }
+          await txn.rawUpdate(
+            'UPDATE cafe_products SET stock_units = stock_units - ? WHERE product_name = ?',
+            [item.quantity, item.productName],
+          );
+        }
+        await txn.insert('cafe_sale_items', {
+          'sale_id': saleId,
+          'product_name': item.productName,
+          'quantity': item.quantity,
+          'unit_price': price,
+          'discount_per_unit': item.discountPerUnit,
+        });
+      }
+      await txn.delete('cafe_orders', where: 'id = ?', whereArgs: [order.id]);
+    });
+  }
+
+  Future<Map<String, int>> loadInventorySales(
+    DateTime from,
+    DateTime through,
+  ) async {
+    final db = await _database.database;
+    final start = DateTime(from.year, from.month, from.day);
+    final endExclusive = DateTime(through.year, through.month, through.day + 1);
+    final rows = await db.rawQuery(
+      '''SELECT i.product_name, SUM(i.quantity) AS quantity
+      FROM cafe_sale_items i
+      INNER JOIN cafe_sales s ON s.id = i.sale_id
+      WHERE s.paid_at >= ? AND s.paid_at < ?
+      GROUP BY i.product_name ORDER BY i.product_name''',
+      [start.toIso8601String(), endExclusive.toIso8601String()],
+    );
+    return {
+      for (final row in rows)
+        row['product_name'] as String: (row['quantity'] as num).toInt(),
+    };
+  }
+
+  Future<void> restockProduct(
+    CafeProduct product,
+    int cartons,
+    double purchasePrice,
+  ) async {
+    final unitsPerCarton = product.unitsPerCarton;
+    if (!product.tracksStock || unitsPerCarton == null || cartons <= 0) {
+      throw ArgumentError('بيانات الكرتونة غير صالحة');
+    }
+    final db = await _database.database;
+    await db.rawUpdate(
+      '''UPDATE cafe_products
+      SET stock_units = COALESCE(stock_units, 0) + ?,
+          purchase_price_per_carton = ?
+      WHERE product_name = ?''',
+      [cartons * unitsPerCarton, purchasePrice, product.name],
+    );
+  }
+
+  Future<void> cancelRoomBooking(CafeOrder order) async {
+    if (order.roomNumber == null || order.items.isNotEmpty) {
+      throw StateError('لا يمكن إلغاء حجز يحتوي على أصناف');
+    }
+    final db = await _database.database;
+    await db.transaction((txn) async {
+      final storedItems = await txn.query(
+        'cafe_order_items',
+        columns: ['id'],
+        where: 'order_id = ?',
+        whereArgs: [order.id],
+        limit: 1,
+      );
+      if (storedItems.isNotEmpty) {
+        throw StateError('احصل حساب الأصناف قبل إلغاء حجز الأوضة');
+      }
+      await txn.delete(
+        'cafe_orders',
+        where: 'id = ? AND room_number IS NOT NULL AND status = ?',
+        whereArgs: [order.id, 'open'],
+      );
+    });
+  }
+
+  String _dateKey(DateTime date) =>
+      '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  String _formatDuration(int minutes) {
+    final hours = minutes ~/ 60;
+    final remainder = minutes % 60;
+    return '${hours.toString().padLeft(2, '0')}:${remainder.toString().padLeft(2, '0')}';
+  }
+
+  String _formatTimestamp(DateTime value) =>
+      '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}:${value.second.toString().padLeft(2, '0')}';
+
+  Future<CafeDailyClosing> closeDaily(DateTime date) async {
+    final db = await _database.database;
+    final dateKey = _dateKey(date);
+    return db.transaction((txn) async {
+      final previousClosing = await txn.query(
+        'cafe_daily_closings',
+        where: 'date_key = ?',
+        whereArgs: [dateKey],
+        orderBy: 'closed_at DESC',
+        limit: 1,
+      );
+      final closedAt = DateTime.now();
+      final previousClosedAt = previousClosing.isEmpty
+          ? null
+          : DateTime.parse(previousClosing.first['closed_at'] as String);
+      final where = previousClosedAt == null
+          ? 'substr(paid_at, 1, 10) = ? AND paid_at <= ?'
+          : 'substr(paid_at, 1, 10) = ? AND paid_at > ? AND paid_at <= ?';
+      final whereArgs = previousClosedAt == null
+          ? [dateKey, closedAt.toIso8601String()]
+          : [
+              dateKey,
+              previousClosedAt.toIso8601String(),
+              closedAt.toIso8601String(),
+            ];
+      final sales = await txn.query(
+        'cafe_sales',
+        columns: ['total'],
+        where: where,
+        whereArgs: whereArgs,
+      );
+      final total = sales.fold<double>(
+        0,
+        (sum, sale) => sum + (sale['total'] as num).toDouble(),
+      );
+      final id = await txn.insert('cafe_daily_closings', {
+        'date_key': dateKey,
+        'total': total,
+        'invoice_count': sales.length,
+        'closed_at': closedAt.toIso8601String(),
+      });
+      return CafeDailyClosing(
+        id: id,
+        dateKey: dateKey,
+        total: total,
+        invoiceCount: sales.length,
+        closedAt: closedAt,
+      );
+    });
+  }
+
+  Future<void> saveProduct(CafeProduct product) async {
+    final db = await _database.database;
+    final existing = await db.query(
+      'cafe_products',
+      columns: ['product_name'],
+      where: 'product_name = ?',
+      whereArgs: [product.name],
+      limit: 1,
+    );
+    final values = {
+      'category': product.category,
+      'unit_price': product.price,
+      'stock_units': product.stockUnits,
+      'units_per_carton': product.unitsPerCarton,
+      'purchase_price_per_carton': product.purchasePricePerCarton,
+      'is_active': 1,
+    };
+    if (existing.isEmpty) {
+      await db.insert('cafe_products', {
+        'product_name': product.name,
+        ...values,
+      });
+    } else {
+      await db.update(
+        'cafe_products',
+        values,
+        where: 'product_name = ?',
+        whereArgs: [product.name],
+      );
+    }
+  }
+
+  Future<void> setProductActive(String name, bool active) async {
+    final db = await _database.database;
+    await db.update(
+      'cafe_products',
+      {'is_active': active ? 1 : 0},
+      where: 'product_name = ?',
+      whereArgs: [name],
+    );
+  }
+
+  Future<File> createBackup() => _database.createBackup();
+
+  Future<List<File>> listBackups() => _database.listBackups();
+
+  Future<void> restoreBackup(File backup) => _database.restoreBackup(backup);
+
+  String get backupsDirectoryPath => _database.backupsDirectoryPath;
+
+  Future<bool> hasAdminPassword() async {
+    final rows = await (await _database.database).query(
+      'cafe_settings',
+      columns: ['setting_value'],
+      where: 'setting_key = ?',
+      whereArgs: ['admin_password_hash'],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
+  }
+
+  Future<void> setAdminPassword(String password) async {
+    final random = Random.secure();
+    final salt = List<int>.generate(16, (_) => random.nextInt(256));
+    final hash = sha256.convert([...salt, ...utf8.encode(password)]).toString();
+    final value = '${base64Encode(salt)}:$hash';
+    final db = await _database.database;
+    await db.insert('cafe_settings', {
+      'setting_key': 'admin_password_hash',
+      'setting_value': value,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<bool> verifyAdminPassword(String password) async {
+    final rows = await (await _database.database).query(
+      'cafe_settings',
+      columns: ['setting_value'],
+      where: 'setting_key = ?',
+      whereArgs: ['admin_password_hash'],
+      limit: 1,
+    );
+    if (rows.isEmpty) return false;
+    final parts = (rows.first['setting_value'] as String).split(':');
+    if (parts.length != 2) return false;
+    final salt = base64Decode(parts.first);
+    final candidate = sha256.convert([
+      ...salt,
+      ...utf8.encode(password),
+    ]).toString();
+    return candidate == parts.last;
+  }
+
+  Map<String, List<Map<String, Object?>>> _groupRows(
+    List<Map<String, Object?>> rows,
+    String column,
+  ) {
+    final grouped = <String, List<Map<String, Object?>>>{};
+    for (final row in rows) {
+      final key = row[column].toString();
+      grouped.putIfAbsent(key, () => []).add(row);
+    }
+    return grouped;
+  }
+
+  Future<void> setTableCount(int count) async {
+    final db = await _database.database;
+    await db.insert('cafe_settings', {
+      'setting_key': 'table_count',
+      'setting_value': '$count',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> saveRoomHourlyRate(
+    int roomNumber,
+    String mode,
+    double rate,
+  ) async {
+    final db = await _database.database;
+    await db.insert('cafe_settings', {
+      'setting_key': 'room_${roomNumber}_$mode',
+      'setting_value': rate.toString(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  CafeRoomSession _roomSessionFromMap(Map<String, Object?> row) =>
+      CafeRoomSession(
+        id: row['id'] as String,
+        mode: row['mode'] as String,
+        hourlyRate: (row['hourly_rate'] as num).toDouble(),
+        legacyFixedCharge: (row['fixed_charge'] as num?)?.toDouble(),
+        startedAt:
+            DateTime.tryParse(row['started_at'] as String) ?? DateTime.now(),
+        endedAt: DateTime.tryParse(row['ended_at'] as String? ?? ''),
+      );
+
+  Future<void> _migrateLegacyJson(Database db) async {
+    final migrated = await db.query(
+      'cafe_settings',
+      where: 'setting_key = ?',
+      whereArgs: ['legacy_json_migrated'],
+      limit: 1,
+    );
+    if (migrated.isNotEmpty) return;
+
+    final appData =
+        Platform.environment['LOCALAPPDATA'] ??
+        Platform.environment['APPDATA'] ??
+        Directory.current.path;
+    final oldFile = File(path.join(appData, 'CafeSystem', 'cafe_data.json'));
+    if (await oldFile.exists()) {
+      try {
+        final data =
+            jsonDecode(await oldFile.readAsString()) as Map<String, dynamic>;
+        await db.transaction((txn) async {
+          final tableCount = data['tableCount'] as int? ?? 16;
+          await txn.insert('cafe_settings', {
+            'setting_key': 'table_count',
+            'setting_value': '$tableCount',
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+          for (final raw in (data['orders'] as List? ?? [])) {
+            final order = Map<String, dynamic>.from(raw as Map);
+            final orderId = order['id'] as String;
+            await txn.insert('cafe_orders', {
+              'id': orderId,
+              'label': order['label'] as String,
+              'table_number': order['tableNumber'] as int?,
+              'room_number': order['roomNumber'] as int?,
+              'is_takeaway': (order['isTakeaway'] as bool? ?? false) ? 1 : 0,
+              'created_at':
+                  order['createdAt'] as String? ??
+                  DateTime.now().toIso8601String(),
+              'status': 'open',
+            }, conflictAlgorithm: ConflictAlgorithm.ignore);
+            final rawItems = order['items'];
+            final items = rawItems is Map
+                ? Map<String, dynamic>.from(rawItems)
+                : <String, dynamic>{};
+            for (final item in items.entries) {
+              final product = cafeProducts
+                  .where((p) => p.name == item.key)
+                  .firstOrNull;
+              if (product == null) continue;
+              await txn.insert('cafe_order_items', {
+                'order_id': orderId,
+                'product_name': item.key,
+                'quantity': item.value as int,
+                'unit_price': product.price,
+              }, conflictAlgorithm: ConflictAlgorithm.ignore);
+            }
+          }
+          for (final raw in (data['sales'] as List? ?? [])) {
+            final sale = Map<String, dynamic>.from(raw as Map);
+            final saleId = await txn.insert('cafe_sales', {
+              'label': sale['label'] as String,
+              'total': (sale['total'] as num).toDouble(),
+              'paid_at':
+                  sale['time'] as String? ?? DateTime.now().toIso8601String(),
+            });
+            final items = Map<String, dynamic>.from(
+              sale['items'] as Map? ?? {},
+            );
+            for (final item in items.entries) {
+              final product = cafeProducts
+                  .where((p) => p.name == item.key)
+                  .firstOrNull;
+              if (product == null) continue;
+              await txn.insert('cafe_sale_items', {
+                'sale_id': saleId,
+                'product_name': item.key,
+                'quantity': item.value as int,
+                'unit_price': product.price,
+              });
+            }
+          }
+          await txn.insert('cafe_settings', {
+            'setting_key': 'legacy_json_migrated',
+            'setting_value': '1',
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        });
+      } catch (_) {
+        // Retain the original JSON file if any row cannot be migrated safely.
+        rethrow;
+      }
+    }
+    if (!await oldFile.exists()) {
+      await db.insert('cafe_settings', {
+        'setting_key': 'legacy_json_migrated',
+        'setting_value': '1',
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    if (await oldFile.exists()) {
+      final backup = File('${oldFile.path}.migrated.bak');
+      if (!await backup.exists()) await oldFile.rename(backup.path);
+    }
+  }
+}
