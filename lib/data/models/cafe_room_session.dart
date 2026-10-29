@@ -6,6 +6,7 @@ class CafeRoomSession {
     required this.startedAt,
     this.endedAt,
     this.legacyFixedCharge,
+    this.discount = 0,
   });
 
   final String id;
@@ -16,6 +17,7 @@ class CafeRoomSession {
 
   /// Keeps rooms booked with the old fixed price intact during migration.
   final double? legacyFixedCharge;
+  final double discount;
 
   bool get isActive => endedAt == null;
 
@@ -27,17 +29,22 @@ class CafeRoomSession {
   int durationMinutesAt(DateTime time) => durationAt(time).inSeconds ~/ 60;
 
   double chargeAt(DateTime time) {
-    if (legacyFixedCharge != null) return legacyFixedCharge!;
+    if (legacyFixedCharge != null) {
+      return (legacyFixedCharge! - discount).clamp(0, double.infinity);
+    }
     final seconds = durationAt(time).inSeconds.clamp(0, 1 << 31).toDouble();
-    return (hourlyRate * seconds / 3600 * 100).roundToDouble() / 100;
+    final gross = (hourlyRate * seconds / 3600 * 100).roundToDouble() / 100;
+    return (gross - discount).clamp(0, double.infinity);
   }
 
-  CafeRoomSession copyWith({DateTime? endedAt}) => CafeRoomSession(
-    id: id,
-    mode: mode,
-    hourlyRate: hourlyRate,
-    startedAt: startedAt,
-    endedAt: endedAt ?? this.endedAt,
-    legacyFixedCharge: legacyFixedCharge,
-  );
+  CafeRoomSession copyWith({DateTime? endedAt, double? discount}) =>
+      CafeRoomSession(
+        id: id,
+        mode: mode,
+        hourlyRate: hourlyRate,
+        startedAt: startedAt,
+        endedAt: endedAt ?? this.endedAt,
+        legacyFixedCharge: legacyFixedCharge,
+        discount: discount ?? this.discount,
+      );
 }

@@ -52,11 +52,24 @@ class CafeCheckoutDialog extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        '${session.mode == 'multi' ? 'Multi' : 'Single'} • ${_formatDuration(session.durationMinutesAt(session.endedAt ?? DateTime.now()))} • ${_formatTimestamp(session.startedAt)} إلى ${_formatTimestamp(session.endedAt ?? DateTime.now())} • ${session.hourlyRate.toStringAsFixed(2)} ج.م/ساعة',
+                        '${session.mode == 'multi' ? 'Multi' : 'Single'} • ${_formatDuration(session.durationMinutesAt(session.endedAt ?? DateTime.now()))} • ${_formatTimestamp(session.startedAt)} إلى ${_formatTimestamp(session.endedAt ?? DateTime.now())} • ${session.hourlyRate.toStringAsFixed(2)} ج.م/ساعة${session.discount > 0 ? ' • خصم ${session.discount.toStringAsFixed(2)} ج.م' : ''}',
                       ),
                     ),
-                    Text(
-                      '${session.chargeAt(session.endedAt ?? DateTime.now()).toStringAsFixed(2)} ج.م',
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        if (session.discount > 0)
+                          Text(
+                            'خصم ${session.discount.toStringAsFixed(2)} ج.م',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.redAccent,
+                            ),
+                          ),
+                        Text(
+                          '${session.chargeAt(session.endedAt ?? DateTime.now()).toStringAsFixed(2)} ج.م',
+                        ),
+                      ],
                     ),
                   ],
                 ),

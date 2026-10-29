@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../data/models/cafe_product.dart';
+import 'cafe_page_heading.dart';
 import 'cafe_product_editor_dialog.dart';
 import 'cafe_room_rates_section.dart';
 
@@ -62,18 +63,9 @@ class CafeMenuPage extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                'إدارة المنيو والأسعار',
-                style: TextStyle(
-                  fontSize: 25,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.ink,
-                ),
-              ),
-            ),
+        CafePageHeading(
+          title: 'إدارة المنيو والأسعار',
+          actions: [
             FilledButton.icon(
               onPressed: () => _addProduct(context),
               icon: const Icon(Icons.add),

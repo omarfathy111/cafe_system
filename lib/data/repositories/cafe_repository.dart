@@ -9,6 +9,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../database/cafe_database.dart';
 import '../models/cafe_daily_closing.dart';
+import '../models/cafe_inventory_total.dart';
 import '../models/cafe_order.dart';
 import '../models/cafe_product.dart';
 import '../models/cafe_sale.dart';
@@ -48,12 +49,11 @@ class CafeRepository {
       await db.query('cafe_sale_room_sessions', orderBy: 'started_at'),
       'sale_id',
     );
-    final productRows = await db.query(
+    final allProductRows = await db.query(
       'cafe_products',
-      where: 'is_active = 1',
       orderBy: 'category, product_name',
     );
-    final products = productRows.map((row) {
+    CafeProduct mapProduct(Map<String, Object?> row) {
       final name = row['product_name'] as String;
       final defaultProduct = cafeProducts
           .where((product) => product.name == name)
@@ -68,7 +68,16 @@ class CafeRepository {
         purchasePricePerCarton: (row['purchase_price_per_carton'] as num?)
             ?.toDouble(),
       );
-    }).toList();
+    }
+
+    final products = allProductRows
+        .where((row) => row['is_active'] == 1)
+        .map(mapProduct)
+        .toList();
+    final inventoryProducts = allProductRows
+        .where((row) => row['stock_units'] != null)
+        .map(mapProduct)
+        .toList();
     final dailyClosings = (await db.query(
       'cafe_daily_closings',
       orderBy: 'closed_at DESC',
@@ -134,7 +143,7 @@ class CafeRepository {
         for (final session in roomSessions) {
           final sessionEnd = session.endedAt ?? DateTime.now();
           summary.update(
-            'بلايستيشن ${session.mode == 'multi' ? 'Multi' : 'Single'} • ${_formatTimestamp(session.startedAt)}-${_formatTimestamp(sessionEnd)} • ${_formatDuration(session.durationMinutesAt(sessionEnd))} • ${session.chargeAt(sessionEnd).toStringAsFixed(2)} ج.م',
+            'بلايستيشن ${session.mode == 'multi' ? 'Multi' : 'Single'} • ${_formatTimestamp(session.startedAt)}-${_formatTimestamp(sessionEnd)} • ${_formatDuration(session.durationMinutesAt(sessionEnd))}${session.discount > 0 ? ' • خصم ${session.discount.toStringAsFixed(2)} ج.م' : ''} • ${session.chargeAt(sessionEnd).toStringAsFixed(2)} ج.م',
             (count) => count + 1,
             ifAbsent: () => 1,
           );
@@ -185,6 +194,7 @@ class CafeRepository {
       orders: orderModels,
       sales: saleModels,
       products: products,
+      inventoryProducts: inventoryProducts,
       tableCount: tableCount,
       roomHourlyRates: roomHourlyRates,
       dailyClosings: dailyClosings,
@@ -219,6 +229,7 @@ class CafeRepository {
           'mode': session.mode,
           'hourly_rate': session.hourlyRate,
           'fixed_charge': session.legacyFixedCharge,
+          'discount': session.discount,
           'started_at': session.startedAt.toIso8601String(),
           'ended_at': session.endedAt?.toIso8601String(),
         });
@@ -272,6 +283,7 @@ class CafeRepository {
           'mode': session.mode,
           'hourly_rate': session.hourlyRate,
           'fixed_charge': session.legacyFixedCharge,
+          'discount': session.discount,
           'started_at': session.startedAt.toIso8601String(),
           'ended_at': (session.endedAt ?? now).toIso8601String(),
         });
@@ -320,7 +332,7 @@ class CafeRepository {
     });
   }
 
-  Future<Map<String, int>> loadInventorySales(
+  Future<Map<String, CafeInventoryTotal>> loadInventorySales(
     DateTime from,
     DateTime through,
   ) async {
@@ -328,16 +340,30 @@ class CafeRepository {
     final start = DateTime(from.year, from.month, from.day);
     final endExclusive = DateTime(through.year, through.month, through.day + 1);
     final rows = await db.rawQuery(
-      '''SELECT i.product_name, SUM(i.quantity) AS quantity
+      '''SELECT i.product_name,
+          SUM(i.quantity) AS quantity,
+          SUM(i.quantity * (i.unit_price - COALESCE(i.discount_per_unit, 0))) AS amount
       FROM cafe_sale_items i
       INNER JOIN cafe_sales s ON s.id = i.sale_id
       WHERE s.paid_at >= ? AND s.paid_at < ?
       GROUP BY i.product_name ORDER BY i.product_name''',
       [start.toIso8601String(), endExclusive.toIso8601String()],
     );
+    final historicalProducts = await db.query(
+      'cafe_products',
+      columns: ['product_name', 'units_per_carton'],
+    );
+    final cartonSizes = {
+      for (final row in historicalProducts)
+        row['product_name'] as String: row['units_per_carton'] as int?,
+    };
     return {
       for (final row in rows)
-        row['product_name'] as String: (row['quantity'] as num).toInt(),
+        row['product_name'] as String: CafeInventoryTotal(
+          quantity: (row['quantity'] as num).toInt(),
+          amount: (row['amount'] as num?)?.toDouble() ?? 0,
+          unitsPerCarton: cartonSizes[row['product_name'] as String],
+        ),
     };
   }
 
@@ -357,6 +383,19 @@ class CafeRepository {
           purchase_price_per_carton = ?
       WHERE product_name = ?''',
       [cartons * unitsPerCarton, purchasePrice, product.name],
+    );
+  }
+
+  Future<void> setProductStock(CafeProduct product, int stockUnits) async {
+    if (!product.tracksStock || stockUnits < 0) {
+      throw ArgumentError('رصيد المخزون غير صالح');
+    }
+    final db = await _database.database;
+    await db.update(
+      'cafe_products',
+      {'stock_units': stockUnits},
+      where: 'product_name = ? AND stock_units IS NOT NULL',
+      whereArgs: [product.name],
     );
   }
 
@@ -497,6 +536,42 @@ class CafeRepository {
 
   String get backupsDirectoryPath => _database.backupsDirectoryPath;
 
+  Future<void> initializeDefaultAdminPasswordOnce() async {
+    final db = await _database.database;
+    await db.transaction((txn) async {
+      final marker = await txn.query(
+        'cafe_settings',
+        columns: ['setting_value'],
+        where: 'setting_key = ?',
+        whereArgs: ['admin_password_default_eslam1995_v1'],
+        limit: 1,
+      );
+      if (marker.isNotEmpty) return;
+
+      const password = 'eslam1995';
+      final salt = List<int>.generate(16, (_) => Random.secure().nextInt(256));
+      final hash = sha256
+          .convert([...salt, ...utf8.encode(password)])
+          .toString();
+      await txn.insert(
+        'cafe_settings',
+        {
+          'setting_key': 'admin_password_hash',
+          'setting_value': '${base64Encode(salt)}:$hash',
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      await txn.insert(
+        'cafe_settings',
+        {
+          'setting_key': 'admin_password_default_eslam1995_v1',
+          'setting_value': '1',
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    });
+  }
+
   Future<bool> hasAdminPassword() async {
     final rows = await (await _database.database).query(
       'cafe_settings',
@@ -577,6 +652,7 @@ class CafeRepository {
         mode: row['mode'] as String,
         hourlyRate: (row['hourly_rate'] as num).toDouble(),
         legacyFixedCharge: (row['fixed_charge'] as num?)?.toDouble(),
+        discount: (row['discount'] as num?)?.toDouble() ?? 0,
         startedAt:
             DateTime.tryParse(row['started_at'] as String) ?? DateTime.now(),
         endedAt: DateTime.tryParse(row['ended_at'] as String? ?? ''),

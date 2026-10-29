@@ -29,7 +29,7 @@ class CafeSidebar extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'قَهْوَة',
+                      ' قهوة كوخ',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 20,

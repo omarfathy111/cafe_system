@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../data/models/cafe_order.dart';
@@ -38,7 +39,7 @@ class CafePlaceGrid extends StatelessWidget {
   );
 }
 
-class CafePlaceStrip extends StatelessWidget {
+class CafePlaceStrip extends StatefulWidget {
   const CafePlaceStrip({
     super.key,
     required this.tableCount,
@@ -57,6 +58,31 @@ class CafePlaceStrip extends StatelessWidget {
   final void Function(bool isRoom, int number) onSelect;
   final VoidCallback onSelectTakeaway;
   final bool selectedTakeaway;
+
+  @override
+  State<CafePlaceStrip> createState() => _CafePlaceStripState();
+}
+
+class _CafePlaceStripState extends State<CafePlaceStrip> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scroll(double direction) {
+    if (!_scrollController.hasClients) return;
+    _scrollController.animateTo(
+      (_scrollController.offset + direction * 280).clamp(
+        0.0,
+        _scrollController.position.maxScrollExtent,
+      ),
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+  }
 
   @override
   Widget build(BuildContext context) => Container(
@@ -78,27 +104,59 @@ class CafePlaceStrip extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.all(9),
-            itemCount: tableCount + 3,
-            separatorBuilder: (_, _) => const SizedBox(width: 7),
-            itemBuilder: (context, index) {
-              final place = _placeAt(tableCount, index, orders);
-              final selected = place.isTakeaway
-                  ? selectedTakeaway
-                  : place.isRoom
-                  ? selectedRoom == place.number
-                  : selectedTable == place.number;
-              return _CafePlaceTile(
-                place: place,
-                compact: true,
-                selected: selected,
-                onTap: place.isTakeaway
-                    ? onSelectTakeaway
-                    : () => onSelect(place.isRoom, place.number),
-              );
-            },
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: 'تمرير لليسار',
+                onPressed: () => _scroll(-1),
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Expanded(
+                child: ScrollConfiguration(
+                  behavior: MaterialScrollBehavior().copyWith(
+                    dragDevices: {
+                      PointerDeviceKind.touch,
+                      PointerDeviceKind.mouse,
+                      PointerDeviceKind.trackpad,
+                    },
+                  ),
+                  child: ListView.separated(
+                    controller: _scrollController,
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.all(9),
+                    itemCount: widget.tableCount + 3,
+                    separatorBuilder: (_, _) => const SizedBox(width: 7),
+                    itemBuilder: (context, index) {
+                      final place = _placeAt(
+                        widget.tableCount,
+                        index,
+                        widget.orders,
+                      );
+                      final selected = place.isTakeaway
+                          ? widget.selectedTakeaway
+                          : place.isRoom
+                          ? widget.selectedRoom == place.number
+                          : widget.selectedTable == place.number;
+                      return _CafePlaceTile(
+                        place: place,
+                        compact: true,
+                        selected: selected,
+                        onTap: place.isTakeaway
+                            ? widget.onSelectTakeaway
+                            : () => widget.onSelect(place.isRoom, place.number),
+                      );
+                    },
+                  ),
+                ),
+              ),
+              
+              IconButton(
+                tooltip: 'تمرير لليمين',
+                onPressed: () => _scroll(1),
+                icon: const Icon(Icons.chevron_right),
+              ),
+              
+            ],
           ),
         ),
       ],
@@ -121,7 +179,9 @@ class _CafePlaceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final reserved = place.order != null;
+    final reserved = place.isTakeaway
+        ? place.order?.items.isNotEmpty == true
+        : place.order != null;
     if (compact) {
       return InkWell(
         onTap: onTap,

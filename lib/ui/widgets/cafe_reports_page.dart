@@ -6,6 +6,7 @@ import '../../core/constants/app_constants.dart';
 
 import '../../data/models/cafe_sale.dart';
 import '../../data/models/cafe_daily_closing.dart';
+import 'cafe_page_heading.dart';
 import 'cashier_components.dart';
 
 class CafeReportsPage extends StatefulWidget {
@@ -15,11 +16,13 @@ class CafeReportsPage extends StatefulWidget {
     required this.dailyClosings,
     required this.onCloseDay,
     required this.canCloseDay,
+    this.canViewHistory = false,
   });
   final List<CafeSale> sales;
   final List<CafeDailyClosing> dailyClosings;
   final Future<void> Function(DateTime day) onCloseDay;
   final bool canCloseDay;
+  final bool canViewHistory;
 
   @override
   State<CafeReportsPage> createState() => _CafeReportsPageState();
@@ -69,6 +72,9 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
   void _selectDay(DateTime day) {
     if (!mounted) return;
     final normalized = _dateOnly(day);
+    if (!widget.canViewHistory && normalized != _dateOnly(DateTime.now())) {
+      return;
+    }
     setState(() {
       _selectedDay = normalized == _dateOnly(DateTime.now())
           ? null
@@ -104,7 +110,11 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
     final dayNumber = selectedDay.difference(firstSale).inDays + 1;
     final dayClosings =
         widget.dailyClosings
-            .where((item) => item.dateKey == _dateKey(selectedDay))
+            .where(
+              (item) =>
+                  item.dateKey == _dateKey(selectedDay) &&
+                  (widget.canViewHistory || selectedDay == today),
+            )
             .toList()
           ..sort((a, b) => b.closedAt.compareTo(a.closedAt));
     final selectedClosing = dayClosings
@@ -133,14 +143,7 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'التقارير',
-            style: TextStyle(
-              fontSize: 25,
-              fontWeight: FontWeight.bold,
-              color: AppColors.ink,
-            ),
-          ),
+          const CafePageHeading(title: 'التقارير'),
           const SizedBox(height: 14),
           Wrap(
             spacing: 10,
@@ -180,16 +183,19 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
             ),
             child: Row(
               children: [
-                IconButton(
-                  tooltip: 'اليوم السابق',
-                  onPressed: selectedDay.isAfter(firstSale)
-                      ? () => _selectDay(_addDays(selectedDay, -1))
+                if (widget.canViewHistory)
+                  IconButton(
+                  tooltip: 'اليوم التالي',
+                  onPressed: selectedDay.isBefore(today)
+                      ? () => _selectDay(_addDays(selectedDay, 1))
                       : null,
-                  icon: const Icon(Icons.chevron_right),
+                  icon: const Icon(Icons.arrow_back),
                 ),
                 Expanded(
                   child: TextButton.icon(
-                    onPressed: () => _chooseDay(firstSale, today),
+                    onPressed: widget.canViewHistory
+                        ? () => _chooseDay(DateTime(2000), today)
+                        : null,
                     icon: const Icon(Icons.calendar_month),
                     label: Text(
                       '${selectedDay == today ? 'اليوم' : 'فواتير يوم'} ${_formatDate(selectedDay)}',
@@ -197,12 +203,13 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
                     ),
                   ),
                 ),
-                IconButton(
-                  tooltip: 'اليوم التالي',
-                  onPressed: selectedDay.isBefore(today)
-                      ? () => _selectDay(_addDays(selectedDay, 1))
+                if (widget.canViewHistory)
+                  IconButton(
+                  tooltip: 'اليوم السابق',
+                  onPressed: selectedDay.isAfter(DateTime(2000))
+                      ? () => _selectDay(_addDays(selectedDay, -1))
                       : null,
-                  icon: const Icon(Icons.chevron_left),
+                  icon: const Icon(Icons.arrow_forward),
                 ),
               ],
             ),

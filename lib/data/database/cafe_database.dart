@@ -26,7 +26,7 @@ class CafeDatabase {
     _database = await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 14,
+        version: 16,
         onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
         onCreate: _createSchema,
         onUpgrade: _upgradeSchema,
@@ -278,6 +278,28 @@ class CafeDatabase {
         'REAL',
       );
     }
+    if (oldVersion < 15) {
+      await db.update(
+        'cafe_products',
+        {'category': 'سناكس'},
+        where: "product_name LIKE ? OR product_name LIKE ?",
+        whereArgs: ['%شيبسي%', '%شيبس%'],
+      );
+    }
+    if (oldVersion < 16) {
+      await _addColumnIfMissing(
+        db,
+        'cafe_order_room_sessions',
+        'discount',
+        'REAL NOT NULL DEFAULT 0',
+      );
+      await _addColumnIfMissing(
+        db,
+        'cafe_sale_room_sessions',
+        'discount',
+        'REAL NOT NULL DEFAULT 0',
+      );
+    }
   }
 
   Future<void> _createRoomSessionTables(DatabaseExecutor db) async {
@@ -287,6 +309,7 @@ class CafeDatabase {
       mode TEXT NOT NULL,
       hourly_rate REAL NOT NULL,
       fixed_charge REAL,
+      discount REAL NOT NULL DEFAULT 0,
       started_at TEXT NOT NULL,
       ended_at TEXT,
       FOREIGN KEY(order_id) REFERENCES cafe_orders(id) ON DELETE CASCADE
@@ -297,6 +320,7 @@ class CafeDatabase {
       mode TEXT NOT NULL,
       hourly_rate REAL NOT NULL,
       fixed_charge REAL,
+      discount REAL NOT NULL DEFAULT 0,
       started_at TEXT NOT NULL,
       ended_at TEXT NOT NULL,
       FOREIGN KEY(sale_id) REFERENCES cafe_sales(id) ON DELETE CASCADE

@@ -13,8 +13,12 @@ class CafeOrderPanel extends StatelessWidget {
     required this.onDiscount,
     required this.onCheckout,
     required this.onStopRoomSession,
+    this.onResumeRoomSession,
     required this.onChangeRoomMode,
     required this.onCancelRoomBooking,
+    this.onRemoveRoomSession,
+    this.onAddShishaStone,
+    this.onDiscountRoomSession,
   });
 
   final String title;
@@ -23,8 +27,14 @@ class CafeOrderPanel extends StatelessWidget {
   final ValueChanged<CafeOrderItem> onDiscount;
   final ValueChanged<CafeOrder> onCheckout;
   final ValueChanged<CafeOrder> onStopRoomSession;
+  final ValueChanged<CafeOrder>? onResumeRoomSession;
   final ValueChanged<CafeOrder> onChangeRoomMode;
   final ValueChanged<CafeOrder> onCancelRoomBooking;
+  final void Function(CafeOrder order, CafeRoomSession session)?
+  onRemoveRoomSession;
+  final ValueChanged<CafeOrder>? onAddShishaStone;
+  final void Function(CafeOrder order, CafeRoomSession session)?
+  onDiscountRoomSession;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -72,10 +82,9 @@ class CafeOrderPanel extends StatelessWidget {
                   children: [
                     if (order!.roomSessions.isNotEmpty)
                       SizedBox(
-                        height: (order!.roomSessions.length * 58.0).clamp(
-                          58.0,
-                          145.0,
-                        ).toDouble(),
+                        height: (order!.roomSessions.length * 58.0)
+                            .clamp(58.0, 145.0)
+                            .toDouble(),
                         child: ListView.separated(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 14,
@@ -102,15 +111,50 @@ class CafeOrderPanel extends StatelessWidget {
                                 style: const TextStyle(fontSize: 12),
                               ),
                               subtitle: Text(
-                                '${_formatDuration(session.durationMinutesAt(now))} × ${session.hourlyRate.toStringAsFixed(2)} ج.م/ساعة${session.isActive ? ' • جارية' : ''}',
+                                '${_formatDuration(session.durationMinutesAt(now))} × ${session.hourlyRate.toStringAsFixed(2)} ج.م/ساعة${session.discount > 0 ? ' • خصم ${session.discount.toStringAsFixed(2)} ج.م' : ''}${session.isActive ? ' • جارية' : ''}',
                                 style: const TextStyle(fontSize: 10),
                               ),
-                              trailing: Text(
-                                '${session.chargeAt(now).toStringAsFixed(2)} ج.م',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    '${session.chargeAt(now).toStringAsFixed(2)} ج.م',
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'خصم على فترة اللعب',
+                                    visualDensity: VisualDensity.compact,
+                                    onPressed: onDiscountRoomSession == null
+                                        ? null
+                                        : () => onDiscountRoomSession!(
+                                            order!,
+                                            session,
+                                          ),
+                                    icon: const Icon(
+                                      Icons.sell_outlined,
+                                      color: AppColors.orange,
+                                      size: 19,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'إلغاء هذه الفترة من الفاتورة',
+                                    visualDensity: VisualDensity.compact,
+                                    onPressed: onRemoveRoomSession == null
+                                        ? null
+                                        : () => onRemoveRoomSession!(
+                                            order!,
+                                            session,
+                                          ),
+                                    icon: const Icon(
+                                      Icons.delete_outline,
+                                      color: Colors.redAccent,
+                                      size: 19,
+                                    ),
+                                  ),
+                                ],
                               ),
                             );
                           },
@@ -121,6 +165,9 @@ class CafeOrderPanel extends StatelessWidget {
                         order: order!,
                         onChange: onQuantityChange,
                         onDiscount: onDiscount,
+                        onAddShishaStone: onAddShishaStone == null
+                            ? null
+                            : () => onAddShishaStone!(order!),
                       ),
                     ),
                   ],
@@ -187,6 +234,13 @@ class CafeOrderPanel extends StatelessWidget {
                               child: const Text('إنهاء'),
                             ),
                           ],
+                        )
+                      else if (order!.roomSessions.isNotEmpty &&
+                          onResumeRoomSession != null)
+                        TextButton.icon(
+                          onPressed: () => onResumeRoomSession!(order!),
+                          icon: const Icon(Icons.play_arrow),
+                          label: const Text('استئناف'),
                         ),
                     ],
                   ),

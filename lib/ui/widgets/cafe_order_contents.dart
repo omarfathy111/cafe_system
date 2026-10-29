@@ -11,10 +11,12 @@ class CafeOrderContents extends StatelessWidget {
     required this.order,
     required this.onChange,
     required this.onDiscount,
+    this.onAddShishaStone,
   });
   final CafeOrder order;
   final void Function(CafeOrderItem item, int delta) onChange;
   final ValueChanged<CafeOrderItem> onDiscount;
+  final VoidCallback? onAddShishaStone;
   @override
   Widget build(BuildContext context) {
     if (order.items.isEmpty) {
@@ -50,6 +52,16 @@ class CafeOrderContents extends StatelessWidget {
                         color: Colors.black54,
                       ),
                     ),
+                    if (item.productName == 'شيشة' && onAddShishaStone != null)
+                      TextButton.icon(
+                        onPressed: onAddShishaStone,
+                        icon: const Icon(Icons.add, size: 16),
+                        label: const Text('إضافة حجر'),
+                        style: TextButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
                   ],
                 ),
               ),

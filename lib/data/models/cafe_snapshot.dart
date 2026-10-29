@@ -8,6 +8,7 @@ class CafeSnapshot {
     required this.orders,
     required this.sales,
     required this.products,
+    this.inventoryProducts = const [],
     required this.tableCount,
     this.roomHourlyRates = const {},
     this.dailyClosings = const [],
@@ -16,6 +17,7 @@ class CafeSnapshot {
   final List<CafeOrder> orders;
   final List<CafeSale> sales;
   final List<CafeProduct> products;
+  final List<CafeProduct> inventoryProducts;
   final int tableCount;
   final Map<String, double> roomHourlyRates;
   final List<CafeDailyClosing> dailyClosings;

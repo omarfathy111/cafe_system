@@ -48,7 +48,7 @@ class CafeSale {
     for (final session in order.roomSessions) {
       final segmentEnd = session.endedAt ?? sessionEnd;
       summary.update(
-        'بلايستيشن ${session.mode == 'multi' ? 'Multi' : 'Single'} • ${_formatTimestamp(session.startedAt)}-${_formatTimestamp(segmentEnd)} • ${_formatDuration(session.durationMinutesAt(segmentEnd))} • ${session.chargeAt(segmentEnd).toStringAsFixed(2)} ج.م',
+        'بلايستيشن ${session.mode == 'multi' ? 'Multi' : 'Single'} • ${_formatTimestamp(session.startedAt)}-${_formatTimestamp(segmentEnd)} • ${_formatDuration(session.durationMinutesAt(segmentEnd))}${session.discount > 0 ? ' • خصم ${session.discount.toStringAsFixed(2)} ج.م' : ''} • ${session.chargeAt(segmentEnd).toStringAsFixed(2)} ج.م',
         (count) => count + 1,
         ifAbsent: () => 1,
       );

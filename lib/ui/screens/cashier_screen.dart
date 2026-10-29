@@ -35,6 +35,7 @@ class _CashierScreenState extends State<CashierScreen> {
   final List<CafeOrder> _orders = [];
   final List<CafeSale> _sales = [];
   final List<CafeProduct> _products = [];
+  final List<CafeProduct> _inventoryProducts = [];
   final List<CafeDailyClosing> _dailyClosings = [];
   final Map<String, double> _roomHourlyRates = {};
   int _tableCount = 16;
@@ -60,6 +61,15 @@ class _CashierScreenState extends State<CashierScreen> {
             (_search.isEmpty || product.name.contains(_search)),
       )
       .toList();
+  List<CafeProduct> get _inventoryCatalog {
+    final productsByName = <String, CafeProduct>{
+      for (final product in _products) product.name: product,
+      for (final product in _inventoryProducts) product.name: product,
+    };
+    return productsByName.values.toList()
+      ..sort((first, second) => first.name.compareTo(second.name));
+  }
+
   bool get _hasSelectedPlace =>
       _selectedTable != null || _selectedRoom != null || _selectedTakeaway;
 
@@ -93,6 +103,7 @@ class _CashierScreenState extends State<CashierScreen> {
 
   Future<void> _load() async {
     try {
+      await _repository.initializeDefaultAdminPasswordOnce();
       final snapshot = await _repository.load();
       if (!mounted) return;
       setState(() {
@@ -105,6 +116,9 @@ class _CashierScreenState extends State<CashierScreen> {
         _products
           ..clear()
           ..addAll(snapshot.products);
+        _inventoryProducts
+          ..clear()
+          ..addAll(snapshot.inventoryProducts);
         _dailyClosings
           ..clear()
           ..addAll(snapshot.dailyClosings);
@@ -146,6 +160,27 @@ class _CashierScreenState extends State<CashierScreen> {
           _products[index] = product;
         }
         _products.sort((first, second) => first.name.compareTo(second.name));
+        if (product.tracksStock) {
+          final inventoryIndex = _inventoryProducts.indexWhere(
+            (item) => item.name == product.name,
+          );
+          final stockProduct = inventoryIndex < 0
+              ? product
+              : CafeProduct(
+                  product.name,
+                  product.category,
+                  product.price,
+                  product.icon,
+                  stockUnits: product.stockUnits,
+                  unitsPerCarton: product.unitsPerCarton,
+                  purchasePricePerCarton: product.purchasePricePerCarton,
+                );
+          if (inventoryIndex < 0) {
+            _inventoryProducts.add(stockProduct);
+          } else {
+            _inventoryProducts[inventoryIndex] = stockProduct;
+          }
+        }
       });
       _snack('تم حفظ ${product.name} في المنيو');
     } catch (error) {
@@ -170,9 +205,11 @@ class _CashierScreenState extends State<CashierScreen> {
       await _repository.restockProduct(product, cartons, purchasePrice);
       if (!mounted) return;
       setState(() {
-        final index = _products.indexWhere((item) => item.name == product.name);
+        final index = _inventoryProducts.indexWhere(
+          (item) => item.name == product.name,
+        );
         if (index >= 0) {
-          _products[index] = CafeProduct(
+          final updatedProduct = CafeProduct(
             product.name,
             product.category,
             product.price,
@@ -182,11 +219,45 @@ class _CashierScreenState extends State<CashierScreen> {
             unitsPerCarton: product.unitsPerCarton,
             purchasePricePerCarton: purchasePrice,
           );
+          _inventoryProducts[index] = updatedProduct;
+          final activeIndex = _products.indexWhere(
+            (item) => item.name == product.name,
+          );
+          if (activeIndex >= 0) _products[activeIndex] = updatedProduct;
         }
       });
       _snack('تمت إضافة $cartons كرتونة إلى مخزون ${product.name}');
     } catch (error) {
       _snack('تعذر إضافة المخزون: $error');
+    }
+  }
+
+  Future<void> _setProductStock(CafeProduct product, int stockUnits) async {
+    try {
+      await _repository.setProductStock(product, stockUnits);
+      if (!mounted) return;
+      final updatedProduct = CafeProduct(
+        product.name,
+        product.category,
+        product.price,
+        product.icon,
+        stockUnits: stockUnits,
+        unitsPerCarton: product.unitsPerCarton,
+        purchasePricePerCarton: product.purchasePricePerCarton,
+      );
+      setState(() {
+        final inventoryIndex = _inventoryProducts.indexWhere(
+          (item) => item.name == product.name,
+        );
+        if (inventoryIndex >= 0) _inventoryProducts[inventoryIndex] = updatedProduct;
+        final productIndex = _products.indexWhere(
+          (item) => item.name == product.name,
+        );
+        if (productIndex >= 0) _products[productIndex] = updatedProduct;
+      });
+      _snack('تم تعديل رصيد ${product.name}');
+    } catch (error) {
+      _snack('تعذر تعديل المخزون: $error');
     }
   }
 
@@ -322,6 +393,35 @@ class _CashierScreenState extends State<CashierScreen> {
     _persistOrder(order);
   }
 
+  void _addShishaStone(CafeOrder order) {
+    final stone = _products
+        .where((product) => product.name == 'حجر شيشة')
+        .firstOrNull;
+    if (stone == null) {
+      _snack('أضف سعر حجر الشيشة من إدارة المنيو أولًا');
+      return;
+    }
+    if (stone.tracksStock && !_hasStockFor(stone, 1)) {
+      _snack('حجر الشيشة غير متاح في المخزون');
+      return;
+    }
+    final variant = CafeOrderItem(
+      productName: stone.name,
+      quantity: 1,
+      unitPrice: stone.price,
+    );
+    final index = order.items.indexWhere((item) => item.sameVariant(variant));
+    if (index < 0) {
+      order.items.add(variant);
+    } else {
+      order.items[index] = order.items[index].copyWith(
+        quantity: order.items[index].quantity + 1,
+      );
+    }
+    setState(() {});
+    _persistOrder(order);
+  }
+
   void _changeQuantity(CafeOrder order, CafeOrderItem current, int delta) {
     final index = order.items.indexWhere((item) => item.sameVariant(current));
     if (index < 0) return;
@@ -384,7 +484,7 @@ class _CashierScreenState extends State<CashierScreen> {
       final existingOrder = _orders
           .where((item) => item.roomNumber == number)
           .firstOrNull;
-      if (existingOrder?.activeRoomSession == null) {
+      if (existingOrder == null || existingOrder.roomSessions.isEmpty) {
         final booking = await showCafeRoomBookingDialog(
           context,
           roomNumber: number,
@@ -442,13 +542,13 @@ class _CashierScreenState extends State<CashierScreen> {
       setState(() {
         _orders.remove(order);
         for (final item in settledOrder.items) {
-          final productIndex = _products.indexWhere(
+          final productIndex = _inventoryProducts.indexWhere(
             (product) =>
                 product.name == item.productName && product.tracksStock,
           );
           if (productIndex < 0) continue;
-          final product = _products[productIndex];
-          _products[productIndex] = CafeProduct(
+          final product = _inventoryProducts[productIndex];
+          final updatedProduct = CafeProduct(
             product.name,
             product.category,
             product.price,
@@ -457,6 +557,12 @@ class _CashierScreenState extends State<CashierScreen> {
             unitsPerCarton: product.unitsPerCarton,
             purchasePricePerCarton: product.purchasePricePerCarton,
           );
+          _inventoryProducts[productIndex] = updatedProduct;
+          final activeProductIndex = _products.indexWhere(
+            (item) => item.name == product.name,
+          );
+          if (activeProductIndex >= 0)
+            _products[activeProductIndex] = updatedProduct;
         }
         _sales.insert(
           0,
@@ -493,6 +599,163 @@ class _CashierScreenState extends State<CashierScreen> {
     if (index < 0) return;
     setState(() => _orders[index] = stopped);
     await _persistOrder(stopped);
+  }
+
+  Future<void> _resumeRoomSession(CafeOrder order) async {
+    final roomNumber = order.roomNumber;
+    if (roomNumber == null ||
+        order.activeRoomSession != null ||
+        order.roomSessions.isEmpty) {
+      return;
+    }
+    final previousSession = order.roomSessions.last;
+    final resumed = order.copyWith(
+      roomSessions: [
+        ...order.roomSessions,
+        CafeRoomSession(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          mode: previousSession.mode,
+          hourlyRate: previousSession.hourlyRate,
+          startedAt: DateTime.now(),
+        ),
+      ],
+    );
+    final index = _orders.indexWhere((item) => item.id == order.id);
+    if (index < 0) return;
+    setState(() => _orders[index] = resumed);
+    await _persistOrder(resumed);
+    _snack('تم استئناف الجلسة على نفس الفاتورة');
+  }
+
+  Future<void> _removeRoomSession(
+    CafeOrder order,
+    CafeRoomSession session,
+  ) async {
+    final mode = session.mode == 'multi' ? 'Multi' : 'Single';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('إلغاء فترة $mode'),
+        content: Text(
+          'سيتم حذف فترة $mode وقيمتها بالكامل من الفاتورة المفتوحة. هل تريد المتابعة؟',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('رجوع'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('إلغاء الفترة'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final updated = order.copyWith(
+      roomSessions: order.roomSessions
+          .where((item) => item.id != session.id)
+          .toList(),
+    );
+    try {
+      final removeEmptyRoom =
+          updated.roomSessions.isEmpty && updated.items.isEmpty;
+      final write = _pendingWrites.catchError((Object _) {}).then((_) async {
+        if (removeEmptyRoom) {
+          await _repository.cancelRoomBooking(order);
+        } else {
+          await _repository.saveOrder(updated);
+        }
+      });
+      _pendingWrites = write;
+      await write;
+      if (removeEmptyRoom) {
+        if (!mounted) return;
+        setState(() {
+          _orders.removeWhere((item) => item.id == order.id);
+          if (_selectedRoom == order.roomNumber) _selectedRoom = null;
+        });
+      } else {
+        if (!mounted) return;
+        final index = _orders.indexWhere((item) => item.id == order.id);
+        if (index >= 0) setState(() => _orders[index] = updated);
+      }
+      _snack('تم إلغاء فترة $mode وتحديث إجمالي الفاتورة');
+    } catch (error) {
+      _snack('تعذر إلغاء الفترة: $error');
+    }
+  }
+
+  Future<void> _discountRoomSession(
+    CafeOrder order,
+    CafeRoomSession session,
+  ) async {
+    final currentCharge = session.chargeAt(DateTime.now());
+    final controller = TextEditingController(
+      text: session.discount > 0 ? session.discount.toStringAsFixed(2) : '',
+    );
+    final discount = await showDialog<double>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('خصم على ${session.mode == 'multi' ? 'Multi' : 'Single'}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'قيمة الفترة الحالية: ${currentCharge.toStringAsFixed(2)} ج.م',
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'قيمة الخصم بالجنيه',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final value = double.tryParse(controller.text.trim());
+              if (value != null && value >= 0 && value <= currentCharge) {
+                Navigator.pop(dialogContext, value);
+              }
+            },
+            child: const Text('حفظ الخصم'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (discount == null || !mounted) return;
+    final updated = order.copyWith(
+      roomSessions: order.roomSessions
+          .map(
+            (item) => item.id == session.id
+                ? item.copyWith(discount: discount)
+                : item,
+          )
+          .toList(),
+    );
+    final index = _orders.indexWhere((item) => item.id == order.id);
+    if (index < 0) return;
+    setState(() => _orders[index] = updated);
+    await _persistOrder(updated);
+    _snack(
+      discount == 0
+          ? 'تم إلغاء خصم فترة اللعب'
+          : 'تم تطبيق خصم ${discount.toStringAsFixed(2)} ج.م على الفترة',
+    );
   }
 
   Future<void> _cancelRoomBooking(CafeOrder order) async {
@@ -674,6 +937,18 @@ class _CashierScreenState extends State<CashierScreen> {
     });
   }
 
+  List<CafeSale> get _todaySales {
+    final now = DateTime.now();
+    return _sales
+        .where(
+          (sale) =>
+              sale.time.year == now.year &&
+              sale.time.month == now.month &&
+              sale.time.day == now.day,
+        )
+        .toList();
+  }
+
   void _snack(String message) => ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
       content: Text(message, textAlign: TextAlign.center),
@@ -711,10 +986,18 @@ class _CashierScreenState extends State<CashierScreen> {
                               onSelectTakeaway: _selectTakeaway,
                             ),
                             2 => CafeReportsPage(
-                              sales: _sales,
-                              dailyClosings: _dailyClosings,
+                              sales: _adminUnlocked ? _sales : _todaySales,
+                              dailyClosings: _adminUnlocked
+                                  ? _dailyClosings
+                                  : _dailyClosings.where((closing) {
+                                      final now = DateTime.now();
+                                      final todayKey =
+                                          '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+                                      return closing.dateKey == todayKey;
+                                    }).toList(),
                               onCloseDay: _closeDaily,
                               canCloseDay: true,
+                              canViewHistory: _adminUnlocked,
                             ),
                             3 => CafeMenuPage(
                               products: _products,
@@ -724,9 +1007,10 @@ class _CashierScreenState extends State<CashierScreen> {
                               onSaveRoomHourlyRate: _saveRoomHourlyRate,
                             ),
                             4 => CafeInventoryPage(
-                              products: _products,
+                              products: _inventoryCatalog,
                               onAddStockProduct: _addStockProduct,
                               onRestock: _restockProduct,
+                              onSetStock: _setProductStock,
                               onLoadSales: _repository.loadInventorySales,
                             ),
                             5 => CafeBackupPage(
@@ -846,8 +1130,12 @@ class _CashierScreenState extends State<CashierScreen> {
       },
       onCheckout: _checkout,
       onStopRoomSession: _stopRoomSession,
+      onResumeRoomSession: _resumeRoomSession,
       onChangeRoomMode: _changeRoomMode,
       onCancelRoomBooking: _cancelRoomBooking,
+      onRemoveRoomSession: _removeRoomSession,
+      onAddShishaStone: _addShishaStone,
+      onDiscountRoomSession: _discountRoomSession,
     );
   }
 }

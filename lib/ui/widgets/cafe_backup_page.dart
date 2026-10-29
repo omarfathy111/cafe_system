@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../core/constants/app_constants.dart';
+import 'cafe_page_heading.dart';
 
 class CafeBackupPage extends StatefulWidget {
   const CafeBackupPage({
@@ -110,18 +111,9 @@ class _CafeBackupPageState extends State<CafeBackupPage> {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                'النسخ الاحتياطي والاستعادة',
-                style: TextStyle(
-                  fontSize: 25,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.ink,
-                ),
-              ),
-            ),
+        CafePageHeading(
+          title: 'النسخ الاحتياطي والاستعادة',
+          actions: [
             FilledButton.icon(
               onPressed: _working ? null : _createBackup,
               icon: const Icon(Icons.backup_outlined),
