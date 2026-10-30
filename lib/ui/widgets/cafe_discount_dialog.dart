@@ -41,7 +41,9 @@ class _CafeDiscountDialogState extends State<CafeDiscountDialog> {
 
   void _save() {
     final discount = double.tryParse(_controller.text.trim()) ?? 0;
-    if (discount < 0 || discount > widget.item.unitPrice) {
+    if (!discount.isFinite ||
+        discount < 0 ||
+        discount > widget.item.unitPrice) {
       setState(() => _error = 'الخصم لازم يكون بين صفر وسعر الوحدة');
       return;
     }

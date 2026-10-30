@@ -149,13 +149,12 @@ class _CafePlaceStripState extends State<CafePlaceStrip> {
                   ),
                 ),
               ),
-              
+
               IconButton(
                 tooltip: 'تمرير لليمين',
                 onPressed: () => _scroll(1),
                 icon: const Icon(Icons.chevron_right),
               ),
-              
             ],
           ),
         ),

@@ -99,10 +99,13 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final today = _dateOnly(now);
-    final firstSale = widget.sales.isEmpty
+    final visibleSales = widget.canViewHistory
+        ? widget.sales
+        : widget.sales.where((sale) => _dateOnly(sale.time) == today).toList();
+    final firstSale = visibleSales.isEmpty
         ? today
         : _dateOnly(
-            widget.sales
+            visibleSales
                 .map((sale) => sale.time)
                 .reduce((first, date) => date.isBefore(first) ? date : first),
           );
@@ -128,7 +131,7 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
     final periodStart = selectedClosingIndex > 0
         ? olderClosings[selectedClosingIndex - 1].closedAt
         : DateTime(selectedDay.year, selectedDay.month, selectedDay.day);
-    final selectedSales = widget.sales.where((sale) {
+    final selectedSales = visibleSales.where((sale) {
       if (_dateOnly(sale.time) != selectedDay) return false;
       if (selectedClosing == null) return true;
       return sale.time.isAfter(periodStart) &&
@@ -185,12 +188,12 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
               children: [
                 if (widget.canViewHistory)
                   IconButton(
-                  tooltip: 'اليوم التالي',
-                  onPressed: selectedDay.isBefore(today)
-                      ? () => _selectDay(_addDays(selectedDay, 1))
-                      : null,
-                  icon: const Icon(Icons.arrow_back),
-                ),
+                    tooltip: 'اليوم التالي',
+                    onPressed: selectedDay.isBefore(today)
+                        ? () => _selectDay(_addDays(selectedDay, 1))
+                        : null,
+                    icon: const Icon(Icons.arrow_back),
+                  ),
                 Expanded(
                   child: TextButton.icon(
                     onPressed: widget.canViewHistory
@@ -205,12 +208,12 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
                 ),
                 if (widget.canViewHistory)
                   IconButton(
-                  tooltip: 'اليوم السابق',
-                  onPressed: selectedDay.isAfter(DateTime(2000))
-                      ? () => _selectDay(_addDays(selectedDay, -1))
-                      : null,
-                  icon: const Icon(Icons.arrow_forward),
-                ),
+                    tooltip: 'اليوم السابق',
+                    onPressed: selectedDay.isAfter(DateTime(2000))
+                        ? () => _selectDay(_addDays(selectedDay, -1))
+                        : null,
+                    icon: const Icon(Icons.arrow_forward),
+                  ),
               ],
             ),
           ),

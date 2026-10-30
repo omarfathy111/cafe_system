@@ -373,7 +373,11 @@ class CafeRepository {
     double purchasePrice,
   ) async {
     final unitsPerCarton = product.unitsPerCarton;
-    if (!product.tracksStock || unitsPerCarton == null || cartons <= 0) {
+    if (!product.tracksStock ||
+        unitsPerCarton == null ||
+        cartons <= 0 ||
+        !purchasePrice.isFinite ||
+        purchasePrice <= 0) {
       throw ArgumentError('بيانات الكرتونة غير صالحة');
     }
     final db = await _database.database;
@@ -487,6 +491,15 @@ class CafeRepository {
   }
 
   Future<void> saveProduct(CafeProduct product) async {
+    if (!product.price.isFinite || product.price <= 0) {
+      throw ArgumentError('سعر الصنف غير صالح');
+    }
+    if (product.stockUnits != null &&
+        (product.stockUnits! < 0 ||
+            product.unitsPerCarton == null ||
+            product.unitsPerCarton! <= 0)) {
+      throw ArgumentError('بيانات مخزون الصنف غير صالحة');
+    }
     final db = await _database.database;
     final existing = await db.query(
       'cafe_products',
@@ -550,25 +563,18 @@ class CafeRepository {
 
       const password = 'eslam1995';
       final salt = List<int>.generate(16, (_) => Random.secure().nextInt(256));
-      final hash = sha256
-          .convert([...salt, ...utf8.encode(password)])
-          .toString();
-      await txn.insert(
-        'cafe_settings',
-        {
-          'setting_key': 'admin_password_hash',
-          'setting_value': '${base64Encode(salt)}:$hash',
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
-      await txn.insert(
-        'cafe_settings',
-        {
-          'setting_key': 'admin_password_default_eslam1995_v1',
-          'setting_value': '1',
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      final hash = sha256.convert([
+        ...salt,
+        ...utf8.encode(password),
+      ]).toString();
+      await txn.insert('cafe_settings', {
+        'setting_key': 'admin_password_hash',
+        'setting_value': '${base64Encode(salt)}:$hash',
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.insert('cafe_settings', {
+        'setting_key': 'admin_password_default_eslam1995_v1',
+        'setting_value': '1',
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
     });
   }
 
@@ -627,6 +633,13 @@ class CafeRepository {
   }
 
   Future<void> setTableCount(int count) async {
+    if (count < 1) {
+      throw ArgumentError.value(
+        count,
+        'count',
+        'يجب وجود ترابيزة واحدة على الأقل',
+      );
+    }
     final db = await _database.database;
     await db.insert('cafe_settings', {
       'setting_key': 'table_count',
@@ -639,6 +652,9 @@ class CafeRepository {
     String mode,
     double rate,
   ) async {
+    if (!rate.isFinite || rate <= 0) {
+      throw ArgumentError('سعر الساعة غير صالح');
+    }
     final db = await _database.database;
     await db.insert('cafe_settings', {
       'setting_key': 'room_${roomNumber}_$mode',

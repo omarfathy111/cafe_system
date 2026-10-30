@@ -106,7 +106,7 @@ class _CafeProductEditorDialogState extends State<CafeProductEditorDialog> {
                 decoration: const InputDecoration(labelText: 'السعر بالجنيه'),
                 validator: (value) {
                   final price = double.tryParse(value?.trim() ?? '');
-                  return price == null || price <= 0
+                  return price == null || !price.isFinite || price <= 0
                       ? 'اكتب سعرًا صحيحًا'
                       : null;
                 },

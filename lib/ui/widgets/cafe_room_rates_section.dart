@@ -38,7 +38,7 @@ class CafeRoomRatesSection extends StatelessWidget {
           FilledButton(
             onPressed: () {
               final value = double.tryParse(controller.text.trim());
-              if (value == null || value <= 0) return;
+              if (value == null || !value.isFinite || value <= 0) return;
               Navigator.pop(dialogContext, value);
             },
             child: const Text('حفظ'),

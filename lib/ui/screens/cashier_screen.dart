@@ -125,7 +125,7 @@ class _CashierScreenState extends State<CashierScreen> {
         _roomHourlyRates
           ..clear()
           ..addAll(snapshot.roomHourlyRates);
-        _tableCount = snapshot.tableCount;
+        _tableCount = snapshot.tableCount < 1 ? 1 : snapshot.tableCount;
         _loading = false;
       });
     } catch (error) {
@@ -189,9 +189,26 @@ class _CashierScreenState extends State<CashierScreen> {
   }
 
   Future<void> _addStockProduct(CafeProduct product) async {
-    if (_products.any((item) => item.name == product.name)) {
-      _snack('يوجد صنف بنفس الاسم في المنيو');
-      return;
+    final existingProduct = _products
+        .where((item) => item.name == product.name)
+        .firstOrNull;
+    if (existingProduct != null) {
+      if (existingProduct.tracksStock) {
+        _snack('الصنف ${product.name} مسجل بالفعل في المخزون');
+        return;
+      }
+
+      // Upgrade the existing menu product to carton-tracked stock while
+      // preserving its category, sale price, and icon.
+      product = CafeProduct(
+        existingProduct.name,
+        existingProduct.category,
+        existingProduct.price,
+        existingProduct.icon,
+        stockUnits: product.stockUnits,
+        unitsPerCarton: product.unitsPerCarton,
+        purchasePricePerCarton: product.purchasePricePerCarton,
+      );
     }
     await _saveProduct(product);
   }
@@ -249,7 +266,8 @@ class _CashierScreenState extends State<CashierScreen> {
         final inventoryIndex = _inventoryProducts.indexWhere(
           (item) => item.name == product.name,
         );
-        if (inventoryIndex >= 0) _inventoryProducts[inventoryIndex] = updatedProduct;
+        if (inventoryIndex >= 0)
+          _inventoryProducts[inventoryIndex] = updatedProduct;
         final productIndex = _products.indexWhere(
           (item) => item.name == product.name,
         );
@@ -849,14 +867,14 @@ class _CashierScreenState extends State<CashierScreen> {
 
   Future<void> _tableSettings() async {
     if (!await _requireAdmin()) return;
-    var count = _tableCount;
     final minimumCount = _orders
-        .where((order) => order.tableNumber != null)
+        .where((order) => order.tableNumber != null && order.items.isNotEmpty)
         .fold<int>(
           1,
           (highest, order) =>
               order.tableNumber! > highest ? order.tableNumber! : highest,
         );
+    var count = _tableCount < minimumCount ? minimumCount : _tableCount;
     final value = await showDialog<int>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -878,7 +896,7 @@ class _CashierScreenState extends State<CashierScreen> {
               ),
               Text('$count'),
               IconButton(
-                onPressed: count < 100 ? () => update(() => count++) : null,
+                onPressed: () => update(() => count++),
                 icon: const Icon(Icons.add_circle_outline),
               ),
             ],
@@ -897,9 +915,10 @@ class _CashierScreenState extends State<CashierScreen> {
       ),
     );
     if (value != null) {
-      setState(() => _tableCount = value);
       try {
         await _repository.setTableCount(value);
+        if (!mounted) return;
+        setState(() => _tableCount = value);
       } catch (error) {
         _snack('تعذر حفظ الإعداد: $error');
       }
@@ -935,18 +954,6 @@ class _CashierScreenState extends State<CashierScreen> {
         _selectedTakeaway = false;
       }
     });
-  }
-
-  List<CafeSale> get _todaySales {
-    final now = DateTime.now();
-    return _sales
-        .where(
-          (sale) =>
-              sale.time.year == now.year &&
-              sale.time.month == now.month &&
-              sale.time.day == now.day,
-        )
-        .toList();
   }
 
   void _snack(String message) => ScaffoldMessenger.of(context).showSnackBar(
@@ -986,15 +993,8 @@ class _CashierScreenState extends State<CashierScreen> {
                               onSelectTakeaway: _selectTakeaway,
                             ),
                             2 => CafeReportsPage(
-                              sales: _adminUnlocked ? _sales : _todaySales,
-                              dailyClosings: _adminUnlocked
-                                  ? _dailyClosings
-                                  : _dailyClosings.where((closing) {
-                                      final now = DateTime.now();
-                                      final todayKey =
-                                          '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-                                      return closing.dateKey == todayKey;
-                                    }).toList(),
+                              sales: _sales,
+                              dailyClosings: _dailyClosings,
                               onCloseDay: _closeDaily,
                               canCloseDay: true,
                               canViewHistory: _adminUnlocked,
@@ -1066,9 +1066,9 @@ class _CashierScreenState extends State<CashierScreen> {
             label: const Text('دخول الأدمن'),
           ),
         IconButton(
-          tooltip: 'إعداد الترابيزات (للأدمن)',
+          tooltip: 'إدارة عدد الترابيزات (للأدمن)',
           onPressed: _tableSettings,
-          icon: const Icon(Icons.settings_outlined),
+          icon: const Icon(Icons.table_restaurant),
         ),
       ],
     ),

@@ -189,6 +189,7 @@ class _CafeInventoryPageState extends State<CafeInventoryPage> {
               if (cartons != null &&
                   cartons > 0 &&
                   price != null &&
+                  price.isFinite &&
                   price > 0) {
                 Navigator.pop(context, (cartons, price));
               }
@@ -675,7 +676,9 @@ class _StockProductDialogState extends State<_StockProductDialog> {
 
   String? _positivePrice(String? value) {
     final number = double.tryParse(value?.trim() ?? '');
-    return number == null || number <= 0 ? 'أدخل سعرًا صحيحًا' : null;
+    return number == null || !number.isFinite || number <= 0
+        ? 'أدخل سعرًا صحيحًا'
+        : null;
   }
 
   void _save() {
