@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as path;
@@ -440,8 +439,9 @@ class CafeDatabase {
       final tables = await checkDb.rawQuery(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('cafe_orders', 'cafe_sales', 'cafe_products')",
       );
-      if (tables.length != 3)
+      if (tables.length != 3) {
         throw StateError('ملف النسخة لا يخص نظام الكافيه');
+      }
     } finally {
       await checkDb.close();
     }

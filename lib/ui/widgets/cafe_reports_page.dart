@@ -3,9 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/constants/app_constants.dart';
-
-import '../../data/models/cafe_sale.dart';
 import '../../data/models/cafe_daily_closing.dart';
+import '../../data/models/cafe_sale.dart';
 import 'cafe_page_heading.dart';
 import 'cashier_components.dart';
 

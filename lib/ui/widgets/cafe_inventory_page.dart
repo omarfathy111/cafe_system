@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../core/constants/app_constants.dart';
-import '../../data/models/cafe_product.dart';
 import '../../data/models/cafe_inventory_total.dart';
+import '../../data/models/cafe_product.dart';
 import 'cafe_page_heading.dart';
 
 class CafeInventoryPage extends StatefulWidget {
@@ -89,7 +89,7 @@ class _CafeInventoryPageState extends State<CafeInventoryPage> {
     final result = await showDialog<Set<String>>(
       context: context,
       builder: (dialogContext) {
-        var selected = Set<String>.of(_selectedProducts);
+        final selected = Set<String>.of(_selectedProducts);
         return StatefulBuilder(
           builder: (context, updateDialog) => AlertDialog(
             title: const Text('اختيار أصناف الجرد'),
@@ -358,14 +358,41 @@ class _CafeInventoryPageState extends State<CafeInventoryPage> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      Text(
-                        '${entry.value.quantity} وحدة مباعة',
-                        style: const TextStyle(
-                          color: Colors.black54,
-                          fontSize: 12,
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 9,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEAF2ED),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text.rich(
+                          TextSpan(
+                            children: [
+                              TextSpan(
+                                text: '${entry.value.quantity} ',
+                                style: const TextStyle(
+                                  color: AppColors.green,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const TextSpan(
+                                text: 'وحدة مباعة',
+                                style: TextStyle(
+                                  color: AppColors.ink,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                       if (cartonLabel != null)
@@ -373,7 +400,8 @@ class _CafeInventoryPageState extends State<CafeInventoryPage> {
                           cartonLabel,
                           style: const TextStyle(
                             color: AppColors.green,
-                            fontSize: 11,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                     ],
@@ -382,7 +410,7 @@ class _CafeInventoryPageState extends State<CafeInventoryPage> {
                 Text(
                   '${entry.value.amount.toStringAsFixed(2)} ج.م',
                   style: const TextStyle(
-                    fontSize: 16,
+                    fontSize: 17,
                     fontWeight: FontWeight.bold,
                     color: AppColors.green,
                   ),
@@ -464,7 +492,11 @@ class _CafeInventoryPageState extends State<CafeInventoryPage> {
             '${product.unitsPerCarton} قطعة بالكرتونة • الشراء ${product.purchasePricePerCarton?.toStringAsFixed(2) ?? '—'} ج.م/كرتونة • البيع ${product.price.toStringAsFixed(2)} ج.م/قطعة',
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 11, color: Colors.black54),
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppColors.ink,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ],
       ),
@@ -718,7 +750,7 @@ class _StockProductDialogState extends State<_StockProductDialog> {
               ),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
-                value: _category,
+                initialValue: _category,
                 decoration: const InputDecoration(labelText: 'قسم المنيو'),
                 items: AppCategories.values
                     .where((category) => category != AppCategories.all)

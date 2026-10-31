@@ -82,7 +82,7 @@ class _CafeProductEditorDialogState extends State<CafeProductEditorDialog> {
               ),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
-                value: _category,
+                initialValue: _category,
                 decoration: const InputDecoration(labelText: 'القسم'),
                 items: AppCategories.values
                     .skip(1)

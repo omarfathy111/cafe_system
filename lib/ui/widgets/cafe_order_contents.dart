@@ -49,7 +49,7 @@ class CafeOrderContents extends StatelessWidget {
                           : '${price.toStringAsFixed(2)} ج.م للواحد • الإجمالي ${item.total.toStringAsFixed(2)} ج.م',
                       style: const TextStyle(
                         fontSize: 11,
-                        color: Colors.black54,
+                        color: Colors.black,
                       ),
                     ),
                     if (item.productName == 'شيشة' && onAddShishaStone != null)

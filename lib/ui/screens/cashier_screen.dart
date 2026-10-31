@@ -9,17 +9,17 @@ import '../../data/models/cafe_order.dart';
 import '../../data/models/cafe_product.dart';
 import '../../data/models/cafe_sale.dart';
 import '../../data/repositories/cafe_repository.dart';
-import '../widgets/cashier_components.dart';
-import '../widgets/cafe_pages.dart';
-import '../widgets/cafe_place_widgets.dart';
-import '../widgets/cashier_product_browser.dart';
-import '../widgets/cafe_order_panel.dart';
-import '../widgets/cafe_order_dialogs.dart';
-import '../widgets/cafe_backup_page.dart';
 import '../widgets/admin_password_dialog.dart';
-import '../widgets/cafe_room_booking_dialog.dart';
+import '../widgets/cafe_backup_page.dart';
 import '../widgets/cafe_discount_dialog.dart';
 import '../widgets/cafe_inventory_page.dart';
+import '../widgets/cafe_order_dialogs.dart';
+import '../widgets/cafe_order_panel.dart';
+import '../widgets/cafe_pages.dart';
+import '../widgets/cafe_place_widgets.dart';
+import '../widgets/cafe_room_booking_dialog.dart';
+import '../widgets/cashier_components.dart';
+import '../widgets/cashier_product_browser.dart';
 
 class CashierScreen extends StatefulWidget {
   const CashierScreen({super.key});
@@ -266,8 +266,9 @@ class _CashierScreenState extends State<CashierScreen> {
         final inventoryIndex = _inventoryProducts.indexWhere(
           (item) => item.name == product.name,
         );
-        if (inventoryIndex >= 0)
+        if (inventoryIndex >= 0) {
           _inventoryProducts[inventoryIndex] = updatedProduct;
+        }
         final productIndex = _products.indexWhere(
           (item) => item.name == product.name,
         );
@@ -579,8 +580,9 @@ class _CashierScreenState extends State<CashierScreen> {
           final activeProductIndex = _products.indexWhere(
             (item) => item.name == product.name,
           );
-          if (activeProductIndex >= 0)
+          if (activeProductIndex >= 0) {
             _products[activeProductIndex] = updatedProduct;
+          }
         }
         _sales.insert(
           0,
@@ -867,6 +869,7 @@ class _CashierScreenState extends State<CashierScreen> {
 
   Future<void> _tableSettings() async {
     if (!await _requireAdmin()) return;
+    if (!mounted) return;
     final minimumCount = _orders
         .where((order) => order.tableNumber != null && order.items.isNotEmpty)
         .fold<int>(
