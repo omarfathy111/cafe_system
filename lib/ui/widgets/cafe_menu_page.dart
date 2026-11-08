@@ -11,17 +11,24 @@ class CafeMenuPage extends StatelessWidget {
     super.key,
     required this.products,
     required this.onSaveProduct,
+    this.onRenameProduct,
     required this.onDeactivateProduct,
     required this.roomHourlyRates,
     required this.onSaveRoomHourlyRate,
+    this.roomNames = const {},
+    this.onSaveRoomName,
   });
 
   final List<CafeProduct> products;
   final Future<void> Function(CafeProduct product) onSaveProduct;
+  final Future<void> Function(String previousName, CafeProduct product)?
+  onRenameProduct;
   final Future<void> Function(CafeProduct product) onDeactivateProduct;
   final Map<String, double> roomHourlyRates;
   final Future<void> Function(int room, String mode, double rate)
   onSaveRoomHourlyRate;
+  final Map<String, String> roomNames;
+  final Future<void> Function(int number, String name)? onSaveRoomName;
 
   Future<void> _addProduct(BuildContext context) async {
     final product = await showCafeProductEditor(context);
@@ -30,7 +37,13 @@ class CafeMenuPage extends StatelessWidget {
 
   Future<void> _editProduct(BuildContext context, CafeProduct product) async {
     final updated = await showCafeProductEditor(context, product: product);
-    if (updated != null) await onSaveProduct(updated);
+    if (updated != null) {
+      if (updated.name != product.name && onRenameProduct != null) {
+        await onRenameProduct!(product.name, updated);
+      } else {
+        await onSaveProduct(updated);
+      }
+    }
   }
 
   Future<void> _confirmDeactivate(
@@ -80,6 +93,8 @@ class CafeMenuPage extends StatelessWidget {
               CafeRoomRatesSection(
                 rates: roomHourlyRates,
                 onSave: onSaveRoomHourlyRate,
+                roomNames: roomNames,
+                onSaveRoomName: onSaveRoomName,
               ),
               if (products.isEmpty)
                 const Padding(

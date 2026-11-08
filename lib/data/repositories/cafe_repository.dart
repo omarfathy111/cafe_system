@@ -9,7 +9,9 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../database/cafe_database.dart';
 import '../models/cafe_daily_closing.dart';
+import '../models/cafe_expense.dart';
 import '../models/cafe_inventory_total.dart';
+import '../models/cafe_note.dart';
 import '../models/cafe_order.dart';
 import '../models/cafe_product.dart';
 import '../models/cafe_sale.dart';
@@ -82,6 +84,14 @@ class CafeRepository {
       'cafe_daily_closings',
       orderBy: 'closed_at DESC',
     )).map(CafeDailyClosing.fromMap).toList();
+    final expenses = (await db.query(
+      'cafe_expenses',
+      orderBy: 'incurred_at DESC',
+    )).map(CafeExpense.fromMap).toList();
+    final notes = (await db.query(
+      'cafe_notes',
+      orderBy: 'created_at DESC, id DESC',
+    )).map(CafeNote.fromMap).toList();
     final orderModels = <CafeOrder>[];
     for (final row in orders) {
       final id = row['id'] as String;
@@ -105,6 +115,7 @@ class CafeRepository {
           tableNumber: row['table_number'] as int?,
           roomNumber: row['room_number'] as int?,
           isTakeaway: (row['is_takeaway'] as int) == 1,
+          note: row['note'] as String? ?? '',
           items: itemModels,
           createdAt:
               DateTime.tryParse(row['created_at'] as String) ?? DateTime.now(),
@@ -165,6 +176,7 @@ class CafeRepository {
           roomEndedAt: roomSessions.isEmpty
               ? DateTime.tryParse(row['room_ended_at'] as String? ?? '')
               : roomSessions.last.endedAt,
+          note: row['note'] as String? ?? '',
         ),
       );
     }
@@ -190,6 +202,15 @@ class CafeRepository {
       final value = double.tryParse(row['setting_value'] as String);
       if (value != null && value > 0) roomHourlyRates[key] = value;
     }
+    final nameRows = await db.query(
+      'cafe_settings',
+      where: "setting_key LIKE 'place_name_%'",
+    );
+    final placeNames = <String, String>{
+      for (final row in nameRows)
+        (row['setting_key'] as String).substring('place_name_'.length):
+            row['setting_value'] as String,
+    };
     return CafeSnapshot(
       orders: orderModels,
       sales: saleModels,
@@ -198,6 +219,9 @@ class CafeRepository {
       tableCount: tableCount,
       roomHourlyRates: roomHourlyRates,
       dailyClosings: dailyClosings,
+      expenses: expenses,
+      placeNames: placeNames,
+      notes: notes,
     );
   }
 
@@ -210,6 +234,7 @@ class CafeRepository {
         'table_number': order.tableNumber,
         'room_number': order.roomNumber,
         'is_takeaway': order.isTakeaway ? 1 : 0,
+        'note': order.note,
         'created_at': order.createdAt.toIso8601String(),
         'room_started_at': order.roomStartedAt?.toIso8601String(),
         'room_ended_at': order.roomEndedAt?.toIso8601String(),
@@ -271,6 +296,7 @@ class CafeRepository {
         'label': order.label,
         'total': order.total,
         'paid_at': now.toIso8601String(),
+        'note': order.note,
         'room_charge': order.roomCharge,
         'room_minutes': order.roomDurationMinutesAt(now),
         'room_started_at': order.roomStartedAt?.toIso8601String(),
@@ -470,10 +496,31 @@ class CafeRepository {
         where: where,
         whereArgs: whereArgs,
       );
-      final total = sales.fold<double>(
+      final grossSales = sales.fold<double>(
         0,
         (sum, sale) => sum + (sale['total'] as num).toDouble(),
       );
+      final expenseWhere = previousClosedAt == null
+          ? 'substr(incurred_at, 1, 10) = ? AND incurred_at <= ?'
+          : 'substr(incurred_at, 1, 10) = ? AND incurred_at > ? AND incurred_at <= ?';
+      final expenseWhereArgs = previousClosedAt == null
+          ? [dateKey, closedAt.toIso8601String()]
+          : [
+              dateKey,
+              previousClosedAt.toIso8601String(),
+              closedAt.toIso8601String(),
+            ];
+      final expenses = await txn.query(
+        'cafe_expenses',
+        columns: ['amount'],
+        where: expenseWhere,
+        whereArgs: expenseWhereArgs,
+      );
+      final expenseTotal = expenses.fold<double>(
+        0,
+        (sum, expense) => sum + (expense['amount'] as num).toDouble(),
+      );
+      final total = grossSales - expenseTotal;
       final id = await txn.insert('cafe_daily_closings', {
         'date_key': dateKey,
         'total': total,
@@ -490,7 +537,7 @@ class CafeRepository {
     });
   }
 
-  Future<void> saveProduct(CafeProduct product) async {
+  Future<void> saveProduct(CafeProduct product, {String? previousName}) async {
     if (!product.price.isFinite || product.price <= 0) {
       throw ArgumentError('سعر الصنف غير صالح');
     }
@@ -501,13 +548,6 @@ class CafeRepository {
       throw ArgumentError('بيانات مخزون الصنف غير صالحة');
     }
     final db = await _database.database;
-    final existing = await db.query(
-      'cafe_products',
-      columns: ['product_name'],
-      where: 'product_name = ?',
-      whereArgs: [product.name],
-      limit: 1,
-    );
     final values = {
       'category': product.category,
       'unit_price': product.price,
@@ -516,19 +556,93 @@ class CafeRepository {
       'purchase_price_per_carton': product.purchasePricePerCarton,
       'is_active': 1,
     };
-    if (existing.isEmpty) {
-      await db.insert('cafe_products', {
-        'product_name': product.name,
-        ...values,
-      });
-    } else {
-      await db.update(
+    final oldName = previousName?.trim();
+    await db.transaction((txn) async {
+      if (oldName != null && oldName.isNotEmpty && oldName != product.name) {
+        final oldRows = await txn.query(
+          'cafe_products',
+          where: 'product_name = ?',
+          whereArgs: [oldName],
+          limit: 1,
+        );
+        if (oldRows.isEmpty) throw StateError('الصنف القديم غير موجود');
+        final newRows = await txn.query(
+          'cafe_products',
+          columns: ['product_name'],
+          where: 'product_name = ?',
+          whereArgs: [product.name],
+          limit: 1,
+        );
+        if (newRows.isNotEmpty) throw StateError('يوجد صنف بالاسم الجديد');
+
+        await txn.insert('cafe_products', {
+          'product_name': product.name,
+          ...values,
+        });
+        await txn.update(
+          'cafe_order_items',
+          {'product_name': product.name},
+          where: 'product_name = ?',
+          whereArgs: [oldName],
+        );
+        await txn.update(
+          'cafe_sale_items',
+          {'product_name': product.name},
+          where: 'product_name = ?',
+          whereArgs: [oldName],
+        );
+        await txn.delete(
+          'cafe_products',
+          where: 'product_name = ?',
+          whereArgs: [oldName],
+        );
+        return;
+      }
+
+      final existing = await txn.query(
         'cafe_products',
-        values,
+        columns: ['product_name'],
         where: 'product_name = ?',
         whereArgs: [product.name],
+        limit: 1,
       );
+      if (existing.isEmpty) {
+        await txn.insert('cafe_products', {
+          'product_name': product.name,
+          ...values,
+        });
+      } else {
+        await txn.update(
+          'cafe_products',
+          values,
+          where: 'product_name = ?',
+          whereArgs: [product.name],
+        );
+      }
+    });
+  }
+
+  Future<CafeExpense> addExpense({
+    required double amount,
+    required String note,
+  }) async {
+    final normalizedNote = note.trim();
+    if (!amount.isFinite || amount <= 0 || normalizedNote.isEmpty) {
+      throw ArgumentError('أدخل مبلغًا صحيحًا ووصفًا للمصروف');
     }
+    final db = await _database.database;
+    final incurredAt = DateTime.now();
+    final id = await db.insert('cafe_expenses', {
+      'amount': amount,
+      'note': normalizedNote,
+      'incurred_at': incurredAt.toIso8601String(),
+    });
+    return CafeExpense(
+      id: id,
+      amount: amount,
+      note: normalizedNote,
+      incurredAt: incurredAt,
+    );
   }
 
   Future<void> setProductActive(String name, bool active) async {
@@ -546,6 +660,18 @@ class CafeRepository {
   Future<List<File>> listBackups() => _database.listBackups();
 
   Future<void> restoreBackup(File backup) => _database.restoreBackup(backup);
+
+  Future<CafeNote> addNote(String note) async {
+    final text = note.trim();
+    if (text.isEmpty) throw ArgumentError('اكتب الملاحظة أولًا');
+    final db = await _database.database;
+    final createdAt = DateTime.now();
+    final id = await db.insert('cafe_notes', {
+      'note_text': text,
+      'created_at': createdAt.toIso8601String(),
+    });
+    return CafeNote(id: id, text: text, createdAt: createdAt);
+  }
 
   String get backupsDirectoryPath => _database.backupsDirectoryPath;
 
@@ -659,6 +785,31 @@ class CafeRepository {
     await db.insert('cafe_settings', {
       'setting_key': 'room_${roomNumber}_$mode',
       'setting_value': rate.toString(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> savePlaceName({
+    required bool isRoom,
+    required int number,
+    required String name,
+  }) async {
+    if (number < 1 || (!isRoom && number > 1000) || (isRoom && number > 2)) {
+      throw ArgumentError('رقم المكان غير صالح');
+    }
+    final db = await _database.database;
+    final key = 'place_name_${isRoom ? 'room' : 'table'}_$number';
+    final value = name.trim();
+    if (value.isEmpty) {
+      await db.delete(
+        'cafe_settings',
+        where: 'setting_key = ?',
+        whereArgs: [key],
+      );
+      return;
+    }
+    await db.insert('cafe_settings', {
+      'setting_key': key,
+      'setting_value': value,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 

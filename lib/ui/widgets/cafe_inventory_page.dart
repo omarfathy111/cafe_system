@@ -11,19 +11,20 @@ class CafeInventoryPage extends StatefulWidget {
     required this.products,
     required this.onAddStockProduct,
     required this.onRestock,
-    this.onSetStock,
+    this.onEditStockProduct,
     required this.onLoadSales,
   });
 
   final List<CafeProduct> products;
   final Future<void> Function(CafeProduct product) onAddStockProduct;
+  final Future<void> Function(CafeProduct original, CafeProduct updated)?
+  onEditStockProduct;
   final Future<void> Function(
     CafeProduct product,
     int cartons,
     double purchasePrice,
   )
   onRestock;
-  final Future<void> Function(CafeProduct product, int stockUnits)? onSetStock;
   final Future<Map<String, CafeInventoryTotal>> Function(
     DateTime from,
     DateTime through,
@@ -150,6 +151,15 @@ class _CafeInventoryPageState extends State<CafeInventoryPage> {
     if (result != null) await widget.onAddStockProduct(result);
   }
 
+  Future<void> _editProduct(CafeProduct product) async {
+    final updated = await showDialog<CafeProduct>(
+      context: context,
+      builder: (_) => _StockProductDialog(product: product),
+    );
+    if (updated != null)
+      await widget.onEditStockProduct?.call(product, updated);
+  }
+
   Future<void> _restock(CafeProduct product) async {
     final controller = TextEditingController(text: '1');
     final priceController = TextEditingController(
@@ -204,65 +214,6 @@ class _CafeInventoryPageState extends State<CafeInventoryPage> {
     if (result != null) {
       await widget.onRestock(product, result.$1, result.$2);
     }
-  }
-
-  Future<void> _editStock(CafeProduct product) async {
-    final packSize = product.unitsPerCarton ?? 1;
-    final currentUnits = product.stockUnits ?? 0;
-    final cartonsController = TextEditingController(
-      text: (currentUnits ~/ packSize).toString(),
-    );
-    final looseController = TextEditingController(
-      text: (currentUnits % packSize).toString(),
-    );
-    final result = await showDialog<int>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('تعديل مخزون ${product.name}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('الكرتونة تحتوي على $packSize قطعة'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: cartonsController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'عدد الكراتين'),
-            ),
-            TextField(
-              controller: looseController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'قطع خارج الكراتين'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('إلغاء'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final cartons = int.tryParse(cartonsController.text.trim());
-              final loose = int.tryParse(looseController.text.trim());
-              if (cartons == null ||
-                  loose == null ||
-                  cartons < 0 ||
-                  loose < 0 ||
-                  loose >= packSize) {
-                return;
-              }
-              Navigator.pop(dialogContext, cartons * packSize + loose);
-            },
-            child: const Text('حفظ الرصيد'),
-          ),
-        ],
-      ),
-    );
-    cartonsController.dispose();
-    looseController.dispose();
-    if (result != null) await widget.onSetStock?.call(product, result);
   }
 
   String _date(DateTime value) =>
@@ -463,12 +414,12 @@ class _CafeInventoryPageState extends State<CafeInventoryPage> {
                   ),
                 ),
               ),
-              if (widget.onSetStock != null)
+              if (widget.onEditStockProduct != null)
                 IconButton(
-                  tooltip: 'تعديل الرصيد',
-                  onPressed: () => _editStock(product),
-                  icon: const Icon(Icons.edit_outlined),
-                  color: AppColors.ink,
+                  tooltip: 'تعديل بيانات الصنف',
+                  onPressed: () => _editProduct(product),
+                  icon: const Icon(Icons.tune_outlined),
+                  color: AppColors.green,
                 ),
               IconButton(
                 tooltip: 'إضافة كراتين',
@@ -676,7 +627,9 @@ class _CafeInventoryPageState extends State<CafeInventoryPage> {
 }
 
 class _StockProductDialog extends StatefulWidget {
-  const _StockProductDialog();
+  const _StockProductDialog({this.product});
+
+  final CafeProduct? product;
 
   @override
   State<_StockProductDialog> createState() => _StockProductDialogState();
@@ -687,15 +640,33 @@ class _StockProductDialogState extends State<_StockProductDialog> {
   final _name = TextEditingController();
   final _price = TextEditingController();
   final _cartons = TextEditingController(text: '1');
+  final _looseUnits = TextEditingController(text: '0');
   final _unitsPerCarton = TextEditingController();
   final _purchasePrice = TextEditingController();
   String _category = 'سناكس';
+
+  @override
+  void initState() {
+    super.initState();
+    final product = widget.product;
+    if (product == null) return;
+    final packSize = product.unitsPerCarton ?? 1;
+    final stock = product.stockUnits ?? 0;
+    _name.text = product.name;
+    _category = product.category;
+    _price.text = product.price.toString();
+    _cartons.text = (stock ~/ packSize).toString();
+    _looseUnits.text = (stock % packSize).toString();
+    _unitsPerCarton.text = packSize.toString();
+    _purchasePrice.text = product.purchasePricePerCarton?.toString() ?? '';
+  }
 
   @override
   void dispose() {
     _name.dispose();
     _price.dispose();
     _cartons.dispose();
+    _looseUnits.dispose();
     _unitsPerCarton.dispose();
     _purchasePrice.dispose();
     super.dispose();
@@ -715,17 +686,18 @@ class _StockProductDialogState extends State<_StockProductDialog> {
 
   void _save() {
     if (!_formKey.currentState!.validate()) return;
+    final unitsPerCarton = int.parse(_unitsPerCarton.text.trim());
     Navigator.pop(
       context,
       CafeProduct(
         _name.text.trim(),
         _category,
         double.parse(_price.text.trim()),
-        Icons.fastfood_outlined,
+        widget.product?.icon ?? Icons.fastfood_outlined,
         stockUnits:
-            int.parse(_cartons.text.trim()) *
-            int.parse(_unitsPerCarton.text.trim()),
-        unitsPerCarton: int.parse(_unitsPerCarton.text.trim()),
+            int.parse(_cartons.text.trim()) * unitsPerCarton +
+            int.parse(_looseUnits.text.trim()),
+        unitsPerCarton: unitsPerCarton,
         purchasePricePerCarton: double.parse(_purchasePrice.text.trim()),
       ),
     );
@@ -733,7 +705,9 @@ class _StockProductDialogState extends State<_StockProductDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('إضافة صنف بالكرتونة'),
+    title: Text(
+      widget.product == null ? 'إضافة صنف بالكرتونة' : 'تعديل بيانات الصنف',
+    ),
     content: SizedBox(
       width: 410,
       child: Form(
@@ -777,9 +751,14 @@ class _StockProductDialogState extends State<_StockProductDialog> {
                 controller: _cartons,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
-                  labelText: 'عدد الكراتين المشتراة',
+                  labelText: 'عدد الكراتين في المخزون',
                 ),
-                validator: _positiveInt,
+                validator: (value) {
+                  final number = int.tryParse(value?.trim() ?? '');
+                  return number == null || number < 0
+                      ? 'أدخل عددًا صحيحًا'
+                      : null;
+                },
               ),
               TextFormField(
                 controller: _unitsPerCarton,
@@ -788,6 +767,22 @@ class _StockProductDialogState extends State<_StockProductDialog> {
                   labelText: 'عدد القطع في الكرتونة',
                 ),
                 validator: _positiveInt,
+              ),
+              TextFormField(
+                controller: _looseUnits,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'قطع خارج الكراتين',
+                ),
+                validator: (value) {
+                  final number = int.tryParse(value?.trim() ?? '');
+                  final packSize = int.tryParse(_unitsPerCarton.text.trim());
+                  return number == null ||
+                          number < 0 ||
+                          (packSize != null && number >= packSize)
+                      ? 'أدخل قطعًا أقل من حجم الكرتونة'
+                      : null;
+                },
               ),
               TextFormField(
                 controller: _purchasePrice,
@@ -811,7 +806,9 @@ class _StockProductDialogState extends State<_StockProductDialog> {
       ),
       FilledButton(
         onPressed: _save,
-        child: const Text('إضافة للمنيو والمخزون'),
+        child: Text(
+          widget.product == null ? 'إضافة للمنيو والمخزون' : 'حفظ التعديلات',
+        ),
       ),
     ],
   );

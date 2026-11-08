@@ -12,12 +12,14 @@ class CafeBackupPage extends StatefulWidget {
     required this.onCreateBackup,
     required this.onListBackups,
     required this.onRestoreBackup,
+    this.canManageBackups = true,
   });
 
   final String backupDirectory;
   final Future<File> Function() onCreateBackup;
   final Future<List<File>> Function() onListBackups;
   final Future<void> Function(File backup) onRestoreBackup;
+  final bool canManageBackups;
 
   @override
   State<CafeBackupPage> createState() => _CafeBackupPageState();
@@ -31,10 +33,18 @@ class _CafeBackupPageState extends State<CafeBackupPage> {
   @override
   void initState() {
     super.initState();
-    _refresh();
+    if (widget.canManageBackups) {
+      _refresh();
+    } else {
+      _loading = false;
+    }
   }
 
   Future<void> _refresh() async {
+    if (!widget.canManageBackups) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
     try {
       final backups = await widget.onListBackups();
       if (mounted) setState(() => _backups = backups);
@@ -113,54 +123,58 @@ class _CafeBackupPageState extends State<CafeBackupPage> {
       children: [
         CafePageHeading(
           title: 'النسخ الاحتياطي والاستعادة',
-          actions: [
-            FilledButton.icon(
-              onPressed: _working ? null : _createBackup,
-              icon: const Icon(Icons.backup_outlined),
-              label: const Text('إنشاء نسخة الآن'),
-            ),
-          ],
+          actions: widget.canManageBackups
+              ? [
+                  FilledButton.icon(
+                    onPressed: _working ? null : _createBackup,
+                    icon: const Icon(Icons.backup_outlined),
+                    label: const Text('إنشاء نسخة الآن'),
+                  ),
+                ]
+              : const [],
         ),
-        const SizedBox(height: 8),
-        SelectableText(
-          'مكان الحفظ: ${widget.backupDirectory}',
-          style: const TextStyle(color: Colors.black54),
-        ),
-        if (_working) const LinearProgressIndicator(),
-        const SizedBox(height: 12),
-        const Text(
-          'النسخ المتاحة',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: _loading
-              ? const Center(child: CircularProgressIndicator())
-              : _backups.isEmpty
-              ? const Center(child: Text('لم يتم إنشاء نسخ احتياطية بعد'))
-              : ListView.builder(
-                  itemCount: _backups.length,
-                  itemBuilder: (context, index) {
-                    final file = _backups[index];
-                    return Card(
-                      color: Colors.white,
-                      child: ListTile(
-                        leading: const Icon(
-                          Icons.storage,
-                          color: AppColors.green,
+        if (widget.canManageBackups) ...[
+          const SizedBox(height: 8),
+          SelectableText(
+            'مكان الحفظ: ${widget.backupDirectory}',
+            style: const TextStyle(color: Colors.black54),
+          ),
+          if (_working) const LinearProgressIndicator(),
+          const SizedBox(height: 12),
+          const Text(
+            'النسخ المتاحة',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _backups.isEmpty
+                ? const Center(child: Text('لم يتم إنشاء نسخ احتياطية بعد'))
+                : ListView.builder(
+                    itemCount: _backups.length,
+                    itemBuilder: (context, index) {
+                      final file = _backups[index];
+                      return Card(
+                        color: Colors.white,
+                        child: ListTile(
+                          leading: const Icon(
+                            Icons.storage,
+                            color: AppColors.green,
+                          ),
+                          title: Text(_backupLabel(file)),
+                          subtitle: Text(file.uri.pathSegments.last),
+                          trailing: OutlinedButton.icon(
+                            onPressed: _working ? null : () => _restore(file),
+                            icon: const Icon(Icons.settings_backup_restore),
+                            label: const Text('استعادة'),
+                          ),
                         ),
-                        title: Text(_backupLabel(file)),
-                        subtitle: Text(file.uri.pathSegments.last),
-                        trailing: OutlinedButton.icon(
-                          onPressed: _working ? null : () => _restore(file),
-                          icon: const Icon(Icons.settings_backup_restore),
-                          label: const Text('استعادة'),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ],
     ),
   );

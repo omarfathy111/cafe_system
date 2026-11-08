@@ -7,10 +7,44 @@ class CafeRoomRatesSection extends StatelessWidget {
     super.key,
     required this.rates,
     required this.onSave,
+    this.roomNames = const {},
+    this.onSaveRoomName,
   });
 
   final Map<String, double> rates;
   final Future<void> Function(int room, String mode, double rate) onSave;
+  final Map<String, String> roomNames;
+  final Future<void> Function(int room, String name)? onSaveRoomName;
+
+  Future<void> _editName(BuildContext context, int room) async {
+    final controller = TextEditingController(
+      text: roomNames['room_$room'] ?? '',
+    );
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('اسم أوضة البلايستيشن $room'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'الاسم الجديد'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, controller.text.trim()),
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name != null) await onSaveRoomName?.call(room, name);
+  }
 
   Future<void> _editRate(BuildContext context, int room, String mode) async {
     final key = 'room_${room}_$mode';
@@ -21,7 +55,9 @@ class CafeRoomRatesSection extends StatelessWidget {
     final rate = await showDialog<double>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text('سعر $modeLabel لأوضة $room'),
+        title: Text(
+          'سعر $modeLabel لـ ${roomNames['room_$room'] ?? 'أوضة $room'}',
+        ),
         content: TextField(
           controller: controller,
           autofocus: true,
@@ -70,7 +106,7 @@ class CafeRoomRatesSection extends StatelessWidget {
           for (var room = 1; room <= 2; room++)
             ListTile(
               contentPadding: EdgeInsets.zero,
-              title: Text('أوضة $room'),
+              title: Text(roomNames['room_$room'] ?? 'أوضة $room'),
               subtitle: Text(
                 'Single: ${(rates['room_${room}_single'] ?? 40).toStringAsFixed(2)} ج.م/ساعة  •  '
                 'Multi: ${(rates['room_${room}_multi'] ?? 40).toStringAsFixed(2)} ج.م/ساعة',
@@ -78,6 +114,13 @@ class CafeRoomRatesSection extends StatelessWidget {
               trailing: Wrap(
                 spacing: 4,
                 children: [
+                  IconButton(
+                    tooltip: 'تعديل اسم الأوضة',
+                    onPressed: onSaveRoomName == null
+                        ? null
+                        : () => _editName(context, room),
+                    icon: const Icon(Icons.edit_outlined),
+                  ),
                   IconButton(
                     tooltip: 'تعديل سعر Single',
                     onPressed: () => _editRate(context, room, 'single'),

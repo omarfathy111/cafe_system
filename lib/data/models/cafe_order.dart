@@ -11,6 +11,7 @@ class CafeOrder {
     this.tableNumber,
     this.roomNumber,
     this.isTakeaway = false,
+    this.note = '',
     List<CafeOrderItem>? items,
     List<CafeRoomSession>? roomSessions,
     DateTime? createdAt,
@@ -23,6 +24,7 @@ class CafeOrder {
   final int? tableNumber;
   final int? roomNumber;
   final bool isTakeaway;
+  final String note;
   final List<CafeOrderItem> items;
   final List<CafeRoomSession> roomSessions;
   final DateTime createdAt;
@@ -68,14 +70,17 @@ class CafeOrder {
       items.fold<double>(0, (sum, item) => sum + item.total) + roomCharge;
 
   CafeOrder copyWith({
+    String? label,
     List<CafeOrderItem>? items,
     List<CafeRoomSession>? roomSessions,
+    String? note,
   }) => CafeOrder(
     id: id,
-    label: label,
+    label: label ?? this.label,
     tableNumber: tableNumber,
     roomNumber: roomNumber,
     isTakeaway: isTakeaway,
+    note: note ?? this.note,
     items: items ?? this.items,
     roomSessions: roomSessions ?? this.roomSessions,
     createdAt: createdAt,

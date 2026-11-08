@@ -5,21 +5,24 @@ import 'package:flutter/material.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../data/models/cafe_daily_closing.dart';
+import '../../data/models/cafe_expense.dart';
+import '../../data/models/cafe_note.dart';
 import '../../data/models/cafe_order.dart';
 import '../../data/models/cafe_product.dart';
 import '../../data/models/cafe_sale.dart';
 import '../../data/repositories/cafe_repository.dart';
-import '../widgets/admin_password_dialog.dart';
-import '../widgets/cafe_backup_page.dart';
-import '../widgets/cafe_discount_dialog.dart';
-import '../widgets/cafe_inventory_page.dart';
-import '../widgets/cafe_order_dialogs.dart';
-import '../widgets/cafe_order_panel.dart';
+import '../widgets/cashier_components.dart';
 import '../widgets/cafe_pages.dart';
 import '../widgets/cafe_place_widgets.dart';
-import '../widgets/cafe_room_booking_dialog.dart';
-import '../widgets/cashier_components.dart';
 import '../widgets/cashier_product_browser.dart';
+import '../widgets/cafe_order_panel.dart';
+import '../widgets/cafe_order_dialogs.dart';
+import '../widgets/cafe_backup_page.dart';
+import '../widgets/admin_password_dialog.dart';
+import '../widgets/cafe_room_booking_dialog.dart';
+import '../widgets/cafe_discount_dialog.dart';
+import '../widgets/cafe_inventory_page.dart';
+import '../widgets/cafe_notes_page.dart';
 
 class CashierScreen extends StatefulWidget {
   const CashierScreen({super.key});
@@ -35,9 +38,11 @@ class _CashierScreenState extends State<CashierScreen> {
   final List<CafeOrder> _orders = [];
   final List<CafeSale> _sales = [];
   final List<CafeProduct> _products = [];
-  final List<CafeProduct> _inventoryProducts = [];
   final List<CafeDailyClosing> _dailyClosings = [];
+  final List<CafeExpense> _expenses = [];
+  final List<CafeNote> _notes = [];
   final Map<String, double> _roomHourlyRates = {};
+  final Map<String, String> _placeNames = {};
   int _tableCount = 16;
   int _selectedNav = 0;
   int? _selectedTable;
@@ -61,17 +66,24 @@ class _CashierScreenState extends State<CashierScreen> {
             (_search.isEmpty || product.name.contains(_search)),
       )
       .toList();
-  List<CafeProduct> get _inventoryCatalog {
-    final productsByName = <String, CafeProduct>{
-      for (final product in _products) product.name: product,
-      for (final product in _inventoryProducts) product.name: product,
-    };
-    return productsByName.values.toList()
-      ..sort((first, second) => first.name.compareTo(second.name));
-  }
-
   bool get _hasSelectedPlace =>
       _selectedTable != null || _selectedRoom != null || _selectedTakeaway;
+
+  Map<String, String> get _placeNotes {
+    final notes = <String, String>{};
+    for (final order in _orders) {
+      if (order.note.trim().isEmpty) continue;
+      final key = order.isTakeaway
+          ? 'takeaway'
+          : order.roomNumber != null
+          ? 'room_${order.roomNumber}'
+          : order.tableNumber != null
+          ? 'table_${order.tableNumber}'
+          : null;
+      if (key != null) notes[key] = order.note;
+    }
+    return notes;
+  }
 
   int get _occupiedPlaces => _orders
       .where(
@@ -103,7 +115,6 @@ class _CashierScreenState extends State<CashierScreen> {
 
   Future<void> _load() async {
     try {
-      await _repository.initializeDefaultAdminPasswordOnce();
       final snapshot = await _repository.load();
       if (!mounted) return;
       setState(() {
@@ -116,16 +127,22 @@ class _CashierScreenState extends State<CashierScreen> {
         _products
           ..clear()
           ..addAll(snapshot.products);
-        _inventoryProducts
-          ..clear()
-          ..addAll(snapshot.inventoryProducts);
         _dailyClosings
           ..clear()
           ..addAll(snapshot.dailyClosings);
+        _expenses
+          ..clear()
+          ..addAll(snapshot.expenses);
+        _notes
+          ..clear()
+          ..addAll(snapshot.notes);
         _roomHourlyRates
           ..clear()
           ..addAll(snapshot.roomHourlyRates);
-        _tableCount = snapshot.tableCount < 1 ? 1 : snapshot.tableCount;
+        _placeNames
+          ..clear()
+          ..addAll(snapshot.placeNames);
+        _tableCount = snapshot.tableCount;
         _loading = false;
       });
     } catch (error) {
@@ -160,27 +177,6 @@ class _CashierScreenState extends State<CashierScreen> {
           _products[index] = product;
         }
         _products.sort((first, second) => first.name.compareTo(second.name));
-        if (product.tracksStock) {
-          final inventoryIndex = _inventoryProducts.indexWhere(
-            (item) => item.name == product.name,
-          );
-          final stockProduct = inventoryIndex < 0
-              ? product
-              : CafeProduct(
-                  product.name,
-                  product.category,
-                  product.price,
-                  product.icon,
-                  stockUnits: product.stockUnits,
-                  unitsPerCarton: product.unitsPerCarton,
-                  purchasePricePerCarton: product.purchasePricePerCarton,
-                );
-          if (inventoryIndex < 0) {
-            _inventoryProducts.add(stockProduct);
-          } else {
-            _inventoryProducts[inventoryIndex] = stockProduct;
-          }
-        }
       });
       _snack('تم حفظ ${product.name} في المنيو');
     } catch (error) {
@@ -188,29 +184,155 @@ class _CashierScreenState extends State<CashierScreen> {
     }
   }
 
-  Future<void> _addStockProduct(CafeProduct product) async {
-    final existingProduct = _products
-        .where((item) => item.name == product.name)
-        .firstOrNull;
-    if (existingProduct != null) {
-      if (existingProduct.tracksStock) {
-        _snack('الصنف ${product.name} مسجل بالفعل في المخزون');
-        return;
-      }
+  Future<void> _renameProduct(String previousName, CafeProduct product) async {
+    if (_products.any(
+      (item) => item.name == product.name && item.name != previousName,
+    )) {
+      _snack('يوجد صنف آخر بنفس الاسم');
+      return;
+    }
+    try {
+      await _repository.saveProduct(product, previousName: previousName);
+      if (!mounted) return;
+      setState(() {
+        final index = _products.indexWhere((item) => item.name == previousName);
+        if (index >= 0) {
+          _products[index] = product;
+        } else {
+          _products.add(product);
+        }
+        _products.sort((first, second) => first.name.compareTo(second.name));
+      });
+      _snack('تم تعديل الصنف وحفظ الاسم الجديد');
+    } catch (error) {
+      _snack('تعذر تعديل الصنف: $error');
+    }
+  }
 
-      // Upgrade the existing menu product to carton-tracked stock while
-      // preserving its category, sale price, and icon.
-      product = CafeProduct(
-        existingProduct.name,
-        existingProduct.category,
-        existingProduct.price,
-        existingProduct.icon,
-        stockUnits: product.stockUnits,
-        unitsPerCarton: product.unitsPerCarton,
-        purchasePricePerCarton: product.purchasePricePerCarton,
-      );
+  Future<void> _addStockProduct(CafeProduct product) async {
+    if (_products.any((item) => item.name == product.name)) {
+      _snack('يوجد صنف بنفس الاسم في المنيو');
+      return;
     }
     await _saveProduct(product);
+  }
+
+  Future<void> _editStockProduct(
+    CafeProduct original,
+    CafeProduct updated,
+  ) async {
+    final duplicate = _products.any(
+      (item) => item.name == updated.name && item.name != original.name,
+    );
+    if (duplicate) {
+      _snack('يوجد صنف آخر بنفس الاسم');
+      return;
+    }
+    try {
+      await _repository.saveProduct(updated, previousName: original.name);
+      if (!mounted) return;
+      setState(() {
+        final index = _products.indexWhere(
+          (item) => item.name == original.name,
+        );
+        if (index >= 0) _products[index] = updated;
+        _products.sort((first, second) => first.name.compareTo(second.name));
+      });
+      _snack('تم تعديل بيانات ${updated.name}');
+    } catch (error) {
+      _snack('تعذر تعديل الصنف: $error');
+    }
+  }
+
+  Future<void> _saveTableName(int number, String name) async {
+    try {
+      await _repository.savePlaceName(
+        isRoom: false,
+        number: number,
+        name: name,
+      );
+      if (!mounted) return;
+      setState(() {
+        final key = 'table_$number';
+        if (name.trim().isEmpty) {
+          _placeNames.remove(key);
+        } else {
+          _placeNames[key] = name.trim();
+        }
+        final activeIndex = _orders.indexWhere(
+          (order) => order.tableNumber == number,
+        );
+        if (activeIndex >= 0) {
+          _orders[activeIndex] = _orders[activeIndex].copyWith(
+            label: name.trim().isEmpty ? 'ترابيزة $number' : name.trim(),
+          );
+        }
+      });
+      final activeOrder = _orders
+          .where((order) => order.tableNumber == number)
+          .firstOrNull;
+      if (activeOrder != null) await _persistOrder(activeOrder);
+      _snack('تم حفظ اسم الترابيزة');
+    } catch (error) {
+      _snack('تعذر حفظ اسم الترابيزة: $error');
+    }
+  }
+
+  Future<void> _editPlaceNote(bool isRoom, int number, bool isTakeaway) async {
+    final existing = _orders.where((order) {
+      if (isTakeaway) return order.isTakeaway;
+      if (isRoom) return order.roomNumber == number;
+      return order.tableNumber == number;
+    }).firstOrNull;
+    final label = isTakeaway
+        ? 'Take Away'
+        : isRoom
+        ? _placeNames['room_$number'] ?? 'أوضة بلايستيشن $number'
+        : _placeNames['table_$number'] ?? 'ترابيزة $number';
+    final order =
+        existing ??
+        CafeOrder(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          label: label,
+          tableNumber: isTakeaway || isRoom ? null : number,
+          roomNumber: isRoom ? number : null,
+          isTakeaway: isTakeaway,
+        );
+    var noteText = order.note;
+    final note = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('ملاحظة $label'),
+        content: TextFormField(
+          initialValue: order.note,
+          autofocus: true,
+          maxLines: 3,
+          onChanged: (value) => noteText = value,
+          decoration: const InputDecoration(hintText: 'اكتب ملاحظة للفاتورة'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, noteText.trim()),
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+    if (note == null || !mounted) return;
+    final updated = order.copyWith(note: note);
+    final index = _orders.indexWhere((item) => item.id == order.id);
+    setState(() {
+      if (index < 0) {
+        _orders.add(updated);
+      } else {
+        _orders[index] = updated;
+      }
+    });
+    await _persistOrder(updated);
   }
 
   Future<void> _restockProduct(
@@ -222,11 +344,9 @@ class _CashierScreenState extends State<CashierScreen> {
       await _repository.restockProduct(product, cartons, purchasePrice);
       if (!mounted) return;
       setState(() {
-        final index = _inventoryProducts.indexWhere(
-          (item) => item.name == product.name,
-        );
+        final index = _products.indexWhere((item) => item.name == product.name);
         if (index >= 0) {
-          final updatedProduct = CafeProduct(
+          _products[index] = CafeProduct(
             product.name,
             product.category,
             product.price,
@@ -236,47 +356,11 @@ class _CashierScreenState extends State<CashierScreen> {
             unitsPerCarton: product.unitsPerCarton,
             purchasePricePerCarton: purchasePrice,
           );
-          _inventoryProducts[index] = updatedProduct;
-          final activeIndex = _products.indexWhere(
-            (item) => item.name == product.name,
-          );
-          if (activeIndex >= 0) _products[activeIndex] = updatedProduct;
         }
       });
       _snack('تمت إضافة $cartons كرتونة إلى مخزون ${product.name}');
     } catch (error) {
       _snack('تعذر إضافة المخزون: $error');
-    }
-  }
-
-  Future<void> _setProductStock(CafeProduct product, int stockUnits) async {
-    try {
-      await _repository.setProductStock(product, stockUnits);
-      if (!mounted) return;
-      final updatedProduct = CafeProduct(
-        product.name,
-        product.category,
-        product.price,
-        product.icon,
-        stockUnits: stockUnits,
-        unitsPerCarton: product.unitsPerCarton,
-        purchasePricePerCarton: product.purchasePricePerCarton,
-      );
-      setState(() {
-        final inventoryIndex = _inventoryProducts.indexWhere(
-          (item) => item.name == product.name,
-        );
-        if (inventoryIndex >= 0) {
-          _inventoryProducts[inventoryIndex] = updatedProduct;
-        }
-        final productIndex = _products.indexWhere(
-          (item) => item.name == product.name,
-        );
-        if (productIndex >= 0) _products[productIndex] = updatedProduct;
-      });
-      _snack('تم تعديل رصيد ${product.name}');
-    } catch (error) {
-      _snack('تعذر تعديل المخزون: $error');
     }
   }
 
@@ -343,10 +427,27 @@ class _CashierScreenState extends State<CashierScreen> {
     return _repository.createBackup();
   }
 
+  Future<CafeExpense> _addExpense({
+    required double amount,
+    required String note,
+  }) async {
+    final expense = await _repository.addExpense(amount: amount, note: note);
+    if (mounted) setState(() => _expenses.insert(0, expense));
+    return expense;
+  }
+
   Future<void> _restoreBackup(File backup) async {
     await _pendingWrites;
     await _repository.restoreBackup(backup);
     await _load();
+  }
+
+  Future<CafeNote> _addNote(String text) async {
+    final note = await _repository.addNote(text);
+    if (!mounted) return note;
+    setState(() => _notes.insert(0, note));
+    _snack('تم حفظ الملاحظة');
+    return note;
   }
 
   CafeOrder _ensurePlaceOrder({required bool isRoom, required int number}) {
@@ -359,7 +460,9 @@ class _CashierScreenState extends State<CashierScreen> {
     if (found != null) return found;
     final order = CafeOrder(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
-      label: isRoom ? 'أوضة بلايستيشن $number' : 'ترابيزة $number',
+      label: isRoom
+          ? _placeNames['room_$number'] ?? 'أوضة بلايستيشن $number'
+          : _placeNames['table_$number'] ?? 'ترابيزة $number',
       tableNumber: isRoom ? null : number,
       roomNumber: isRoom ? number : null,
     );
@@ -503,14 +606,13 @@ class _CashierScreenState extends State<CashierScreen> {
       final existingOrder = _orders
           .where((item) => item.roomNumber == number)
           .firstOrNull;
-      if (existingOrder == null || existingOrder.roomSessions.isEmpty) {
+      if (existingOrder?.activeRoomSession == null) {
         final booking = await showCafeRoomBookingDialog(
           context,
           roomNumber: number,
           hourlyRates: _roomHourlyRates,
         );
         if (booking == null || !mounted) return;
-        final bookingStartedAt = DateTime.now();
         final currentOrder =
             existingOrder ?? _ensurePlaceOrder(isRoom: true, number: number);
         final sessionOrder = currentOrder.copyWith(
@@ -520,7 +622,7 @@ class _CashierScreenState extends State<CashierScreen> {
               id: DateTime.now().microsecondsSinceEpoch.toString(),
               mode: booking.mode,
               hourlyRate: booking.hourlyRate,
-              startedAt: bookingStartedAt,
+              startedAt: booking.startedAt,
             ),
           ],
         );
@@ -561,13 +663,13 @@ class _CashierScreenState extends State<CashierScreen> {
       setState(() {
         _orders.remove(order);
         for (final item in settledOrder.items) {
-          final productIndex = _inventoryProducts.indexWhere(
+          final productIndex = _products.indexWhere(
             (product) =>
                 product.name == item.productName && product.tracksStock,
           );
           if (productIndex < 0) continue;
-          final product = _inventoryProducts[productIndex];
-          final updatedProduct = CafeProduct(
+          final product = _products[productIndex];
+          _products[productIndex] = CafeProduct(
             product.name,
             product.category,
             product.price,
@@ -576,13 +678,6 @@ class _CashierScreenState extends State<CashierScreen> {
             unitsPerCarton: product.unitsPerCarton,
             purchasePricePerCarton: product.purchasePricePerCarton,
           );
-          _inventoryProducts[productIndex] = updatedProduct;
-          final activeProductIndex = _products.indexWhere(
-            (item) => item.name == product.name,
-          );
-          if (activeProductIndex >= 0) {
-            _products[activeProductIndex] = updatedProduct;
-          }
         }
         _sales.insert(
           0,
@@ -622,8 +717,7 @@ class _CashierScreenState extends State<CashierScreen> {
   }
 
   Future<void> _resumeRoomSession(CafeOrder order) async {
-    final roomNumber = order.roomNumber;
-    if (roomNumber == null ||
+    if (order.roomNumber == null ||
         order.activeRoomSession != null ||
         order.roomSessions.isEmpty) {
       return;
@@ -645,6 +739,35 @@ class _CashierScreenState extends State<CashierScreen> {
     setState(() => _orders[index] = resumed);
     await _persistOrder(resumed);
     _snack('تم استئناف الجلسة على نفس الفاتورة');
+  }
+
+  Future<void> _editRoomSessionTime(
+    CafeOrder order,
+    CafeRoomSession session,
+  ) async {
+    final startedAt = await chooseCafeRoomStartTime(
+      context,
+      initialDateTime: session.startedAt,
+    );
+    if (startedAt == null || !mounted) return;
+    if (session.endedAt != null && startedAt.isAfter(session.endedAt!)) {
+      _snack('وقت البداية لازم يكون قبل انتهاء الفترة');
+      return;
+    }
+    final updated = order.copyWith(
+      roomSessions: order.roomSessions
+          .map(
+            (item) => item.id == session.id
+                ? item.copyWith(startedAt: startedAt)
+                : item,
+          )
+          .toList(),
+    );
+    final index = _orders.indexWhere((item) => item.id == order.id);
+    if (index < 0) return;
+    setState(() => _orders[index] = updated);
+    await _persistOrder(updated);
+    _snack('تم تعديل وقت بداية فترة اللعب');
   }
 
   Future<void> _removeRoomSession(
@@ -690,14 +813,13 @@ class _CashierScreenState extends State<CashierScreen> {
       });
       _pendingWrites = write;
       await write;
+      if (!mounted) return;
       if (removeEmptyRoom) {
-        if (!mounted) return;
         setState(() {
           _orders.removeWhere((item) => item.id == order.id);
           if (_selectedRoom == order.roomNumber) _selectedRoom = null;
         });
       } else {
-        if (!mounted) return;
         final index = _orders.indexWhere((item) => item.id == order.id);
         if (index >= 0) setState(() => _orders[index] = updated);
       }
@@ -712,9 +834,9 @@ class _CashierScreenState extends State<CashierScreen> {
     CafeRoomSession session,
   ) async {
     final currentCharge = session.chargeAt(DateTime.now());
-    final controller = TextEditingController(
-      text: session.discount > 0 ? session.discount.toStringAsFixed(2) : '',
-    );
+    var discountText = session.discount > 0
+        ? session.discount.toStringAsFixed(2)
+        : '';
     final discount = await showDialog<double>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -727,12 +849,13 @@ class _CashierScreenState extends State<CashierScreen> {
               'قيمة الفترة الحالية: ${currentCharge.toStringAsFixed(2)} ج.م',
             ),
             const SizedBox(height: 10),
-            TextField(
-              controller: controller,
+            TextFormField(
+              initialValue: discountText,
               autofocus: true,
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),
+              onChanged: (value) => discountText = value,
               decoration: const InputDecoration(
                 labelText: 'قيمة الخصم بالجنيه',
               ),
@@ -746,7 +869,7 @@ class _CashierScreenState extends State<CashierScreen> {
           ),
           FilledButton(
             onPressed: () {
-              final value = double.tryParse(controller.text.trim());
+              final value = double.tryParse(discountText.trim());
               if (value != null && value >= 0 && value <= currentCharge) {
                 Navigator.pop(dialogContext, value);
               }
@@ -756,7 +879,6 @@ class _CashierScreenState extends State<CashierScreen> {
         ],
       ),
     );
-    controller.dispose();
     if (discount == null || !mounted) return;
     final updated = order.copyWith(
       roomSessions: order.roomSessions
@@ -867,17 +989,46 @@ class _CashierScreenState extends State<CashierScreen> {
     }
   }
 
+  Future<void> _saveRoomName(int number, String name) async {
+    try {
+      await _repository.savePlaceName(isRoom: true, number: number, name: name);
+      if (!mounted) return;
+      final key = 'room_$number';
+      setState(() {
+        if (name.trim().isEmpty) {
+          _placeNames.remove(key);
+        } else {
+          _placeNames[key] = name.trim();
+        }
+        final activeIndex = _orders.indexWhere(
+          (order) => order.roomNumber == number,
+        );
+        if (activeIndex >= 0) {
+          _orders[activeIndex] = _orders[activeIndex].copyWith(
+            label: name.trim().isEmpty ? 'أوضة بلايستيشن $number' : name.trim(),
+          );
+        }
+      });
+      final activeOrder = _orders
+          .where((order) => order.roomNumber == number)
+          .firstOrNull;
+      if (activeOrder != null) await _persistOrder(activeOrder);
+      _snack('تم حفظ اسم الأوضة');
+    } catch (error) {
+      _snack('تعذر حفظ اسم الأوضة: $error');
+    }
+  }
+
   Future<void> _tableSettings() async {
     if (!await _requireAdmin()) return;
-    if (!mounted) return;
+    var count = _tableCount;
     final minimumCount = _orders
-        .where((order) => order.tableNumber != null && order.items.isNotEmpty)
+        .where((order) => order.tableNumber != null)
         .fold<int>(
           1,
           (highest, order) =>
               order.tableNumber! > highest ? order.tableNumber! : highest,
         );
-    var count = _tableCount < minimumCount ? minimumCount : _tableCount;
     final value = await showDialog<int>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -899,7 +1050,7 @@ class _CashierScreenState extends State<CashierScreen> {
               ),
               Text('$count'),
               IconButton(
-                onPressed: () => update(() => count++),
+                onPressed: count < 100 ? () => update(() => count++) : null,
                 icon: const Icon(Icons.add_circle_outline),
               ),
             ],
@@ -918,10 +1069,9 @@ class _CashierScreenState extends State<CashierScreen> {
       ),
     );
     if (value != null) {
+      setState(() => _tableCount = value);
       try {
         await _repository.setTableCount(value);
-        if (!mounted) return;
-        setState(() => _tableCount = value);
       } catch (error) {
         _snack('تعذر حفظ الإعداد: $error');
       }
@@ -947,7 +1097,7 @@ class _CashierScreenState extends State<CashierScreen> {
   }
 
   Future<void> _selectNavigation(int index) async {
-    if (index >= 3 && !await _requireAdmin()) return;
+    if (index >= 3 && index != 6 && !await _requireAdmin()) return;
     if (!mounted) return;
     setState(() {
       _selectedNav = index;
@@ -994,10 +1144,18 @@ class _CashierScreenState extends State<CashierScreen> {
                               orders: _orders,
                               onSelect: _selectPlace,
                               onSelectTakeaway: _selectTakeaway,
+                              placeNames: _placeNames,
+                              placeNotes: _placeNotes,
+                              onSaveTableName: _adminUnlocked
+                                  ? _saveTableName
+                                  : null,
+                              onEditPlaceNote: _editPlaceNote,
                             ),
                             2 => CafeReportsPage(
                               sales: _sales,
                               dailyClosings: _dailyClosings,
+                              expenses: _expenses,
+                              onAddExpense: _addExpense,
                               onCloseDay: _closeDaily,
                               canCloseDay: true,
                               canViewHistory: _adminUnlocked,
@@ -1005,15 +1163,20 @@ class _CashierScreenState extends State<CashierScreen> {
                             3 => CafeMenuPage(
                               products: _products,
                               onSaveProduct: _saveProduct,
+                              onRenameProduct: _renameProduct,
                               onDeactivateProduct: _deactivateProduct,
                               roomHourlyRates: _roomHourlyRates,
                               onSaveRoomHourlyRate: _saveRoomHourlyRate,
+                              roomNames: _placeNames,
+                              onSaveRoomName: _saveRoomName,
                             ),
                             4 => CafeInventoryPage(
-                              products: _inventoryCatalog,
+                              products: _products,
                               onAddStockProduct: _addStockProduct,
+                              onEditStockProduct: _adminUnlocked
+                                  ? _editStockProduct
+                                  : null,
                               onRestock: _restockProduct,
-                              onSetStock: _setProductStock,
                               onLoadSales: _repository.loadInventorySales,
                             ),
                             5 => CafeBackupPage(
@@ -1021,7 +1184,9 @@ class _CashierScreenState extends State<CashierScreen> {
                               onCreateBackup: _createBackup,
                               onListBackups: _repository.listBackups,
                               onRestoreBackup: _restoreBackup,
+                              canManageBackups: _adminUnlocked,
                             ),
+                            6 => CafeNotesPage(notes: _notes, onAdd: _addNote),
                             _ => wide ? _wideCashier() : _compactCashier(),
                           },
                         ),
@@ -1045,10 +1210,7 @@ class _CashierScreenState extends State<CashierScreen> {
       children: [
         const Icon(Icons.wb_sunny_outlined, color: AppColors.orange),
         const SizedBox(width: 8),
-        const Text(
-          'أهلاً بيك، يومك سعيد',
-          style: TextStyle(color: AppColors.ink, fontWeight: FontWeight.w600),
-        ),
+
         const Spacer(),
         if (_adminUnlocked)
           TextButton.icon(
@@ -1069,9 +1231,9 @@ class _CashierScreenState extends State<CashierScreen> {
             label: const Text('دخول الأدمن'),
           ),
         IconButton(
-          tooltip: 'إدارة عدد الترابيزات (للأدمن)',
+          tooltip: 'إعداد الترابيزات (للأدمن)',
           onPressed: _tableSettings,
-          icon: const Icon(Icons.table_restaurant),
+          icon: const Icon(Icons.settings_outlined),
         ),
       ],
     ),
@@ -1111,6 +1273,9 @@ class _CashierScreenState extends State<CashierScreen> {
     selectedTakeaway: _selectedTakeaway,
     onSelect: _selectPlace,
     onSelectTakeaway: _selectTakeaway,
+    placeNames: _placeNames,
+    placeNotes: _placeNotes,
+    onPlaceNoteTap: _editPlaceNote,
   );
   Widget _orderPanel() {
     final noPlaceSelected = !_hasSelectedPlace;
@@ -1118,9 +1283,9 @@ class _CashierScreenState extends State<CashierScreen> {
     final title = order != null
         ? (order.isTakeaway ? 'Take Away' : order.label)
         : _selectedRoom != null
-        ? 'أوضة بلايستيشن $_selectedRoom'
+        ? _placeNames['room_$_selectedRoom'] ?? 'أوضة بلايستيشن $_selectedRoom'
         : _selectedTable != null
-        ? 'ترابيزة $_selectedTable'
+        ? _placeNames['table_$_selectedTable'] ?? 'ترابيزة $_selectedTable'
         : 'الطلبات';
     return CafeOrderPanel(
       title: title,
@@ -1139,6 +1304,7 @@ class _CashierScreenState extends State<CashierScreen> {
       onRemoveRoomSession: _removeRoomSession,
       onAddShishaStone: _addShishaStone,
       onDiscountRoomSession: _discountRoomSession,
+      onEditRoomSessionTime: _editRoomSessionTime,
     );
   }
 }

@@ -25,7 +25,7 @@ class CafeDatabase {
     _database = await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 16,
+        version: 19,
         onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
         onCreate: _createSchema,
         onUpgrade: _upgradeSchema,
@@ -45,6 +45,7 @@ class CafeDatabase {
       table_number INTEGER,
       room_number INTEGER,
       is_takeaway INTEGER NOT NULL DEFAULT 0,
+      note TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       room_started_at TEXT,
       room_ended_at TEXT,
@@ -82,6 +83,7 @@ class CafeDatabase {
       label TEXT NOT NULL,
       total REAL NOT NULL,
       paid_at TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
       room_charge REAL NOT NULL DEFAULT 0,
       room_minutes INTEGER NOT NULL DEFAULT 0,
       room_started_at TEXT,
@@ -99,6 +101,8 @@ class CafeDatabase {
     )''');
     await _createRoomSessionTables(db);
     await _createDailyClosingsTable(db);
+    await _createExpensesTable(db);
+    await _createNotesTable(db);
     for (final product in cafeProducts) {
       await db.insert('cafe_products', {
         'product_name': product.name,
@@ -299,6 +303,73 @@ class CafeDatabase {
         'REAL NOT NULL DEFAULT 0',
       );
     }
+    if (oldVersion < 17) await _createExpensesTable(db);
+    if (oldVersion < 18) {
+      await _addColumnIfMissing(
+        db,
+        'cafe_orders',
+        'note',
+        "TEXT NOT NULL DEFAULT ''",
+      );
+      await _addColumnIfMissing(
+        db,
+        'cafe_sales',
+        'note',
+        "TEXT NOT NULL DEFAULT ''",
+      );
+      await _migrateSavedTableNotes(db);
+    }
+    if (oldVersion < 19) {
+      await _createNotesTable(db);
+      final oldNoteRows = await db.query(
+        'cafe_settings',
+        columns: ['setting_value'],
+        where: 'setting_key = ?',
+        whereArgs: ['backup_note'],
+        limit: 1,
+      );
+      if (oldNoteRows.isNotEmpty) {
+        final oldNote =
+            (oldNoteRows.first['setting_value'] as String?)?.trim() ?? '';
+        if (oldNote.isNotEmpty) {
+          await db.insert('cafe_notes', {
+            'note_text': oldNote,
+            'created_at': DateTime.now().toIso8601String(),
+          });
+        }
+        await db.delete(
+          'cafe_settings',
+          where: 'setting_key = ?',
+          whereArgs: ['backup_note'],
+        );
+      }
+    }
+  }
+
+  Future<void> _migrateSavedTableNotes(DatabaseExecutor db) async {
+    final rows = await db.query(
+      'cafe_settings',
+      where: "setting_key LIKE 'place_note_table_%'",
+    );
+    for (final row in rows) {
+      final key = row['setting_key'] as String;
+      final tableNumber = int.tryParse(
+        key.substring('place_note_table_'.length),
+      );
+      if (tableNumber != null) {
+        await db.update(
+          'cafe_orders',
+          {'note': row['setting_value'] as String},
+          where: "table_number = ? AND status = 'open'",
+          whereArgs: [tableNumber],
+        );
+      }
+      await db.delete(
+        'cafe_settings',
+        where: 'setting_key = ?',
+        whereArgs: [key],
+      );
+    }
   }
 
   Future<void> _createRoomSessionTables(DatabaseExecutor db) async {
@@ -344,6 +415,23 @@ class CafeDatabase {
       total REAL NOT NULL,
       invoice_count INTEGER NOT NULL,
       closed_at TEXT NOT NULL
+    )
+  ''');
+
+  Future<void> _createExpensesTable(DatabaseExecutor db) => db.execute('''
+    CREATE TABLE IF NOT EXISTS cafe_expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      amount REAL NOT NULL CHECK(amount > 0),
+      note TEXT NOT NULL,
+      incurred_at TEXT NOT NULL
+    )
+  ''');
+
+  Future<void> _createNotesTable(DatabaseExecutor db) => db.execute('''
+    CREATE TABLE IF NOT EXISTS cafe_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      note_text TEXT NOT NULL,
+      created_at TEXT NOT NULL
     )
   ''');
 

@@ -41,16 +41,44 @@ class CafeOrderContents extends StatelessWidget {
                   children: [
                     Text(
                       item.productName,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    Text(
-                      item.discountPerUnit > 0
-                          ? '${price.toStringAsFixed(2)} ج.م • خصم ${item.discountPerUnit.toStringAsFixed(2)} ج.م للوحدة • الصافي ${item.total.toStringAsFixed(2)} ج.م'
-                          : '${price.toStringAsFixed(2)} ج.م للواحد • الإجمالي ${item.total.toStringAsFixed(2)} ج.م',
                       style: const TextStyle(
-                        fontSize: 11,
-                        color: Colors.black,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.ink,
                       ),
+                    ),
+                    const SizedBox(height: 3),
+                    Wrap(
+                      spacing: 7,
+                      runSpacing: 2,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          '${price.toStringAsFixed(2)} ج.م للواحد',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.ink,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        if (item.discountPerUnit > 0)
+                          Text(
+                            'خصم ${item.discountPerUnit.toStringAsFixed(2)} ج.م',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.orange,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        Text(
+                          '${item.discountPerUnit > 0 ? 'الصافي' : 'الإجمالي'} ${item.total.toStringAsFixed(2)} ج.م',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: AppColors.green,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
                     ),
                     if (item.productName == 'شيشة' && onAddShishaStone != null)
                       TextButton.icon(
@@ -81,7 +109,11 @@ class CafeOrderContents extends StatelessWidget {
               ),
               Text(
                 '${item.quantity}',
-                style: const TextStyle(fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.ink,
+                ),
               ),
               IconButton(
                 visualDensity: VisualDensity.compact,

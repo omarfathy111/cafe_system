@@ -1,5 +1,7 @@
+import 'package:cafe_system/data/models/cafe_note.dart';
 import 'package:cafe_system/data/models/cafe_order.dart';
 import 'package:cafe_system/data/models/cafe_product.dart';
+import 'package:cafe_system/data/models/cafe_sale.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -111,6 +113,24 @@ void main() {
 
       expect(session.chargeAt(startedAt.add(const Duration(hours: 3))), 70);
     });
+
+    test(
+      'copyWith updates the start time for retroactive session correction',
+      () {
+        final session = CafeRoomSession(
+          id: 'room-1',
+          mode: 'single',
+          hourlyRate: 40,
+          startedAt: startedAt,
+        );
+        final correctedStart = startedAt.subtract(const Duration(minutes: 30));
+
+        final corrected = session.copyWith(startedAt: correctedStart);
+
+        expect(corrected.startedAt, correctedStart);
+        expect(corrected.chargeAt(startedAt), 20);
+      },
+    );
   });
 
   test('CafeOrder total combines discounted products and room sessions', () {
@@ -138,6 +158,35 @@ void main() {
     );
 
     expect(order.total, 70);
+  });
+
+  test('order note is retained on the paid sale', () {
+    final order = CafeOrder(
+      id: 'table-2',
+      label: 'ترابيزة 2',
+      note: 'العميل دفع جزء من الحساب',
+    );
+    final sale = CafeSale.fromOrder(
+      id: 1,
+      order: order,
+      time: DateTime(2026, 11, 8, 12),
+    );
+
+    expect(sale.note, 'العميل دفع جزء من الحساب');
+    expect(order.copyWith(note: 'ملاحظة محدثة').note, 'ملاحظة محدثة');
+  });
+
+  test('CafeNote maps stored text and timestamp', () {
+    final createdAt = DateTime(2026, 11, 8, 9, 30);
+    final note = CafeNote.fromMap({
+      'id': 7,
+      'note_text': 'تذكير بإغلاق اليومية',
+      'created_at': createdAt.toIso8601String(),
+    });
+
+    expect(note.id, 7);
+    expect(note.text, 'تذكير بإغلاق اليومية');
+    expect(note.createdAt, createdAt);
   });
 
   test('CafeProduct identifies carton-tracked products by stock data', () {

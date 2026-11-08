@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../data/models/cafe_daily_closing.dart';
+import '../../data/models/cafe_expense.dart';
 import '../../data/models/cafe_sale.dart';
 import 'cafe_page_heading.dart';
 import 'cashier_components.dart';
@@ -15,6 +16,8 @@ class CafeReportsPage extends StatefulWidget {
     required this.dailyClosings,
     required this.onCloseDay,
     required this.canCloseDay,
+    this.expenses = const [],
+    this.onAddExpense,
     this.canViewHistory = false,
   });
   final List<CafeSale> sales;
@@ -22,6 +25,12 @@ class CafeReportsPage extends StatefulWidget {
   final Future<void> Function(DateTime day) onCloseDay;
   final bool canCloseDay;
   final bool canViewHistory;
+  final List<CafeExpense> expenses;
+  final Future<CafeExpense> Function({
+    required double amount,
+    required String note,
+  })?
+  onAddExpense;
 
   @override
   State<CafeReportsPage> createState() => _CafeReportsPageState();
@@ -94,6 +103,23 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
     if (picked != null) _selectDay(picked);
   }
 
+  Future<void> _recordExpense() async {
+    final expenseDetails = await showDialog<(double, String)>(
+      context: context,
+      builder: (_) => const _CafeExpenseDialog(),
+    );
+    final addExpense = widget.onAddExpense;
+    if (expenseDetails == null || !mounted || addExpense == null) return;
+    try {
+      await addExpense(amount: expenseDetails.$1, note: expenseDetails.$2);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('تعذر حفظ المصروف: $error')));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
@@ -136,10 +162,32 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
       return sale.time.isAfter(periodStart) &&
           !sale.time.isAfter(selectedClosing.closedAt);
     }).toList();
-    final total = selectedSales.fold<double>(
+    final visibleExpenses = widget.canViewHistory
+        ? widget.expenses
+        : widget.expenses
+              .where((expense) => _dateOnly(expense.incurredAt) == today)
+              .toList();
+    final selectedExpenses = visibleExpenses.where((expense) {
+      if (_dateOnly(expense.incurredAt) != selectedDay) return false;
+      if (selectedClosing == null) return true;
+      return expense.incurredAt.isAfter(periodStart) &&
+          !expense.incurredAt.isAfter(selectedClosing.closedAt);
+    }).toList();
+    final grossSales = selectedSales.fold<double>(
       0,
       (sum, sale) => sum + sale.total,
     );
+    final expenseTotal = selectedExpenses.fold<double>(
+      0,
+      (sum, expense) => sum + expense.amount,
+    );
+    final total = grossSales - expenseTotal;
+    final entries = <({DateTime time, CafeSale? sale, CafeExpense? expense})>[
+      for (final sale in selectedSales)
+        (time: sale.time, sale: sale, expense: null),
+      for (final expense in selectedExpenses)
+        (time: expense.incurredAt, sale: null, expense: expense),
+    ]..sort((a, b) => b.time.compareTo(a.time));
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -152,10 +200,20 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
             runSpacing: 10,
             children: [
               CafeMetric(
+                label: 'إجمالي المبيعات',
+                value: '${grossSales.toStringAsFixed(0)} ج.م',
+                icon: Icons.point_of_sale,
+              ),
+              CafeMetric(
                 label:
-                    'مبيعات ${selectedDay == today ? 'اليوم' : 'اليوم المحدد'}',
+                    'صافي ${selectedDay == today ? 'اليوم' : 'اليوم المحدد'}',
                 value: '${total.toStringAsFixed(0)} ج.م',
                 icon: Icons.payments,
+              ),
+              CafeMetric(
+                label: 'إجمالي المصروفات',
+                value: '${expenseTotal.toStringAsFixed(0)} ج.م',
+                icon: Icons.shopping_bag_outlined,
               ),
               CafeMetric(
                 label: 'عدد الفواتير',
@@ -170,11 +228,25 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
             ],
           ),
           const SizedBox(height: 18),
-          Text(
-            selectedClosing == null
-                ? 'فواتير اليوم'
-                : 'فواتير اليومية حتى ${selectedClosing.closedAt.hour.toString().padLeft(2, '0')}:${selectedClosing.closedAt.minute.toString().padLeft(2, '0')}',
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  selectedClosing == null
+                      ? 'الفواتير والمصروفات'
+                      : 'حركة اليومية حتى ${selectedClosing.closedAt.hour.toString().padLeft(2, '0')}:${selectedClosing.closedAt.minute.toString().padLeft(2, '0')}',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: widget.onAddExpense == null ? null : _recordExpense,
+                icon: const Icon(Icons.add),
+                label: const Text('تسجيل مصروف'),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           Container(
@@ -256,7 +328,7 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
                           'يومية ${closing.closedAt.hour.toString().padLeft(2, '0')}:${closing.closedAt.minute.toString().padLeft(2, '0')}',
                         ),
                         subtitle: Text(
-                          '${closing.invoiceCount} فاتورة • ${closing.total.toStringAsFixed(2)} ج.م',
+                          '${closing.invoiceCount} فاتورة • صافي ${closing.total.toStringAsFixed(2)} ج.م',
                         ),
                         onTap: () =>
                             setState(() => _selectedClosingId = closing.id),
@@ -268,12 +340,38 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
             ),
           const SizedBox(height: 8),
           Expanded(
-            child: selectedSales.isEmpty
-                ? const Center(child: Text('لا توجد فواتير في هذا اليوم'))
+            child: entries.isEmpty
+                ? const Center(
+                    child: Text('لا توجد فواتير أو مصروفات في الفترة المحددة'),
+                  )
                 : ListView.builder(
-                    itemCount: selectedSales.length,
+                    itemCount: entries.length,
                     itemBuilder: (context, index) {
-                      final sale = selectedSales[index];
+                      final entry = entries[index];
+                      final expense = entry.expense;
+                      if (expense != null) {
+                        return Card(
+                          color: const Color(0xFFFFF7F5),
+                          child: ListTile(
+                            leading: const Icon(
+                              Icons.shopping_bag_outlined,
+                              color: Color(0xFFB3261E),
+                            ),
+                            title: Text('مصروف: ${expense.note}'),
+                            subtitle: Text(
+                              '${expense.incurredAt.hour.toString().padLeft(2, '0')}:${expense.incurredAt.minute.toString().padLeft(2, '0')}',
+                            ),
+                            trailing: Text(
+                              '- ${expense.amount.toStringAsFixed(2)} ج.م',
+                              style: const TextStyle(
+                                color: Color(0xFFB3261E),
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+                      final sale = entry.sale!;
                       return Card(
                         color: Colors.white,
                         child: ListTile(
@@ -283,7 +381,7 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
                           ),
                           title: Text(sale.label),
                           subtitle: Text(
-                            '${sale.time.hour.toString().padLeft(2, '0')}:${sale.time.minute.toString().padLeft(2, '0')} • ${sale.items.entries.map((item) => '${item.key} × ${item.value}').join('، ')}${sale.roomSessions.isNotEmpty || sale.roomStartedAt == null ? '' : ' • جلسة البلايستيشن: ${_formatTimestamp(sale.roomStartedAt!)} ← ${sale.roomEndedAt == null ? 'مستمرة' : _formatTimestamp(sale.roomEndedAt!)}'}',
+                            '${sale.time.hour.toString().padLeft(2, '0')}:${sale.time.minute.toString().padLeft(2, '0')} • ${sale.items.entries.map((item) => '${item.key} × ${item.value}').join('، ')}${sale.roomSessions.isNotEmpty || sale.roomStartedAt == null ? '' : ' • جلسة البلايستيشن: ${_formatTimestamp(sale.roomStartedAt!)} ← ${sale.roomEndedAt == null ? 'مستمرة' : _formatTimestamp(sale.roomEndedAt!)}'}${sale.note.isEmpty ? '' : ' • ملاحظة: ${sale.note}'}',
                           ),
                           trailing: Text(
                             '${sale.total.toStringAsFixed(0)} ج.م',
@@ -300,4 +398,81 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
 
   String _formatTimestamp(DateTime value) =>
       '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}:${value.second.toString().padLeft(2, '0')}';
+}
+
+class _CafeExpenseDialog extends StatefulWidget {
+  const _CafeExpenseDialog();
+
+  @override
+  State<_CafeExpenseDialog> createState() => _CafeExpenseDialogState();
+}
+
+class _CafeExpenseDialogState extends State<_CafeExpenseDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _amountController = TextEditingController();
+  final _noteController = TextEditingController();
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    if (!_formKey.currentState!.validate()) return;
+    final amount = double.parse(_amountController.text.trim());
+    Navigator.pop(context, (amount, _noteController.text.trim()));
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('تسجيل مصروف'),
+    content: Form(
+      key: _formKey,
+      child: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextFormField(
+              controller: _amountController,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'المبلغ بالجنيه',
+                prefixIcon: Icon(Icons.payments_outlined),
+              ),
+              validator: (value) {
+                final amount = double.tryParse(value?.trim() ?? '');
+                return amount == null || !amount.isFinite || amount <= 0
+                    ? 'أدخل مبلغًا صحيحًا أكبر من صفر'
+                    : null;
+              },
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _noteController,
+              decoration: const InputDecoration(
+                labelText: 'ملاحظة (مثال: شراء علبة شاي)',
+                prefixIcon: Icon(Icons.edit_note),
+              ),
+              validator: (value) => value == null || value.trim().isEmpty
+                  ? 'اكتب سبب المصروف'
+                  : null,
+            ),
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('إلغاء'),
+      ),
+      FilledButton(onPressed: _save, child: const Text('حفظ المصروف')),
+    ],
+  );
 }

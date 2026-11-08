@@ -11,29 +11,39 @@ class CafePlaceGrid extends StatelessWidget {
     required this.orders,
     required this.onSelect,
     required this.onSelectTakeaway,
+    this.placeNames = const {},
+    this.placeNotes = const {},
+    this.onPlaceNoteTap,
   });
 
   final int tableCount;
   final List<CafeOrder> orders;
   final void Function(bool isRoom, int number) onSelect;
   final VoidCallback onSelectTakeaway;
+  final Map<String, String> placeNames;
+  final Map<String, String> placeNotes;
+  final void Function(bool isRoom, int number, bool isTakeaway)? onPlaceNoteTap;
 
   @override
   Widget build(BuildContext context) => GridView.builder(
     gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
       maxCrossAxisExtent: 220,
-      mainAxisExtent: 125,
+      mainAxisExtent: 150,
       crossAxisSpacing: 12,
       mainAxisSpacing: 12,
     ),
     itemCount: tableCount + 3,
     itemBuilder: (context, index) {
-      final place = _placeAt(tableCount, index, orders);
+      final place = _placeAt(tableCount, index, orders, placeNames, placeNotes);
       return _CafePlaceTile(
         place: place,
         onTap: place.isTakeaway
             ? onSelectTakeaway
             : () => onSelect(place.isRoom, place.number),
+        onEditNote: onPlaceNoteTap == null
+            ? null
+            : () =>
+                  onPlaceNoteTap!(place.isRoom, place.number, place.isTakeaway),
       );
     },
   );
@@ -46,6 +56,9 @@ class CafePlaceStrip extends StatefulWidget {
     required this.orders,
     required this.onSelect,
     required this.onSelectTakeaway,
+    this.placeNames = const {},
+    this.placeNotes = const {},
+    this.onPlaceNoteTap,
     this.selectedTable,
     this.selectedRoom,
     this.selectedTakeaway = false,
@@ -58,6 +71,9 @@ class CafePlaceStrip extends StatefulWidget {
   final void Function(bool isRoom, int number) onSelect;
   final VoidCallback onSelectTakeaway;
   final bool selectedTakeaway;
+  final Map<String, String> placeNames;
+  final Map<String, String> placeNotes;
+  final void Function(bool isRoom, int number, bool isTakeaway)? onPlaceNoteTap;
 
   @override
   State<CafePlaceStrip> createState() => _CafePlaceStripState();
@@ -131,6 +147,8 @@ class _CafePlaceStripState extends State<CafePlaceStrip> {
                         widget.tableCount,
                         index,
                         widget.orders,
+                        widget.placeNames,
+                        widget.placeNotes,
                       );
                       final selected = place.isTakeaway
                           ? widget.selectedTakeaway
@@ -144,6 +162,13 @@ class _CafePlaceStripState extends State<CafePlaceStrip> {
                         onTap: place.isTakeaway
                             ? widget.onSelectTakeaway
                             : () => widget.onSelect(place.isRoom, place.number),
+                        onEditNote: widget.onPlaceNoteTap == null
+                            ? null
+                            : () => widget.onPlaceNoteTap!(
+                                place.isRoom,
+                                place.number,
+                                place.isTakeaway,
+                              ),
                       );
                     },
                   ),
@@ -167,12 +192,14 @@ class _CafePlaceTile extends StatelessWidget {
   const _CafePlaceTile({
     required this.place,
     required this.onTap,
+    this.onEditNote,
     this.compact = false,
     this.selected = false,
   });
 
   final _CafePlace place;
   final VoidCallback onTap;
+  final VoidCallback? onEditNote;
   final bool compact;
   final bool selected;
 
@@ -207,10 +234,31 @@ class _CafePlaceTile extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                place.icon,
-                size: 18,
-                color: selected || reserved ? Colors.white : AppColors.green,
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    place.icon,
+                    size: 18,
+                    color: selected || reserved
+                        ? Colors.white
+                        : AppColors.green,
+                  ),
+                  if (onEditNote != null)
+                    IconButton(
+                      tooltip: 'ملاحظة المكان',
+                      visualDensity: VisualDensity.compact,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 28,
+                        height: 28,
+                      ),
+                      padding: EdgeInsets.zero,
+                      onPressed: onEditNote,
+                      icon: const Icon(Icons.note_alt_outlined, size: 16),
+                      color: AppColors.green,
+                    ),
+                ],
               ),
               Text(
                 place.shortName,
@@ -227,6 +275,18 @@ class _CafePlaceTile extends StatelessWidget {
                   color: selected || reserved ? Colors.white70 : Colors.black54,
                 ),
               ),
+              if (place.note?.isNotEmpty == true)
+                Text(
+                  place.note!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 8,
+                    color: selected || reserved
+                        ? Colors.white70
+                        : AppColors.ink,
+                  ),
+                ),
               if (place.isRoom && place.order?.hasRoomSession == true)
                 Text(
                   'بدأت ${_formatClock(place.order!.roomStartedAt!)}',
@@ -254,10 +314,33 @@ class _CafePlaceTile extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(place.icon, color: reserved ? Colors.white : AppColors.green),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Icon(
+                  place.icon,
+                  color: reserved ? Colors.white : AppColors.green,
+                ),
+                if (onEditNote != null)
+                  IconButton(
+                    tooltip: 'ملاحظة الترابيزة',
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 34,
+                      height: 34,
+                    ),
+                    padding: EdgeInsets.zero,
+                    onPressed: onEditNote,
+                    icon: const Icon(Icons.note_alt_outlined),
+                    color: AppColors.green,
+                  ),
+              ],
+            ),
             const Spacer(),
             Text(
               place.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 color: reserved ? Colors.white : AppColors.ink,
@@ -265,11 +348,24 @@ class _CafePlaceTile extends StatelessWidget {
             ),
             Text(
               place.status,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(color: reserved ? Colors.white70 : null),
             ),
+            if (place.note?.isNotEmpty == true)
+              Text(
+                place.note!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: reserved ? Colors.white70 : AppColors.green,
+                ),
+              ),
             if (place.isRoom && place.order?.hasRoomSession == true)
               Text(
                 'بدأت ${_formatClock(place.order!.roomStartedAt!)}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: reserved ? Colors.white70 : Colors.black54,
                 ),
@@ -287,23 +383,31 @@ class _CafePlace {
     required this.number,
     this.order,
     this.isTakeaway = false,
+    this.customName,
+    this.note,
   });
 
   final bool isRoom;
   final int number;
   final CafeOrder? order;
   final bool isTakeaway;
+  final String? customName;
+  final String? note;
 
-  String get name => isTakeaway
-      ? 'Take Away'
-      : isRoom
-      ? 'أوضة بلايستيشن $number'
-      : 'ترابيزة $number';
-  String get shortName => isTakeaway
-      ? 'Take Away'
-      : isRoom
-      ? 'بلايستيشن $number'
-      : 'ترابيزة $number';
+  String get name =>
+      customName ??
+      (isTakeaway
+          ? 'Take Away'
+          : isRoom
+          ? 'أوضة بلايستيشن $number'
+          : 'ترابيزة $number');
+  String get shortName =>
+      customName ??
+      (isTakeaway
+          ? 'Take Away'
+          : isRoom
+          ? 'بلايستيشن $number'
+          : 'ترابيزة $number');
   IconData get icon => isTakeaway
       ? Icons.takeout_dining
       : isRoom
@@ -325,10 +429,22 @@ String _formatDuration(int minutes) {
 String _formatClock(DateTime value) =>
     '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}:${value.second.toString().padLeft(2, '0')}';
 
-_CafePlace _placeAt(int tableCount, int index, List<CafeOrder> orders) {
+_CafePlace _placeAt(
+  int tableCount,
+  int index,
+  List<CafeOrder> orders,
+  Map<String, String> names,
+  Map<String, String> notes,
+) {
   if (index == tableCount + 2) {
     final order = orders.where((item) => item.isTakeaway).firstOrNull;
-    return _CafePlace(isRoom: false, number: 0, order: order, isTakeaway: true);
+    return _CafePlace(
+      isRoom: false,
+      number: 0,
+      order: order,
+      isTakeaway: true,
+      note: notes['takeaway'],
+    );
   }
   final isRoom = index >= tableCount;
   final number = isRoom ? index - tableCount + 1 : index + 1;
@@ -340,5 +456,12 @@ _CafePlace _placeAt(int tableCount, int index, List<CafeOrder> orders) {
             : item.tableNumber == number && item.items.isNotEmpty,
       )
       .firstOrNull;
-  return _CafePlace(isRoom: isRoom, number: number, order: order);
+  final kind = isRoom ? 'room' : 'table';
+  return _CafePlace(
+    isRoom: isRoom,
+    number: number,
+    order: order,
+    customName: names['${kind}_$number'],
+    note: notes['${isRoom ? 'room' : 'table'}_$number'],
+  );
 }

@@ -17,6 +17,7 @@ class CafeOrderPanel extends StatelessWidget {
     required this.onChangeRoomMode,
     required this.onCancelRoomBooking,
     this.onRemoveRoomSession,
+    this.onEditRoomSessionTime,
     this.onAddShishaStone,
     this.onDiscountRoomSession,
   });
@@ -32,6 +33,8 @@ class CafeOrderPanel extends StatelessWidget {
   final ValueChanged<CafeOrder> onCancelRoomBooking;
   final void Function(CafeOrder order, CafeRoomSession session)?
   onRemoveRoomSession;
+  final void Function(CafeOrder order, CafeRoomSession session)?
+  onEditRoomSessionTime;
   final ValueChanged<CafeOrder>? onAddShishaStone;
   final void Function(CafeOrder order, CafeRoomSession session)?
   onDiscountRoomSession;
@@ -122,6 +125,21 @@ class CafeOrderPanel extends StatelessWidget {
                                     style: const TextStyle(
                                       fontSize: 11,
                                       fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'تعديل وقت بداية الفترة',
+                                    visualDensity: VisualDensity.compact,
+                                    onPressed: onEditRoomSessionTime == null
+                                        ? null
+                                        : () => onEditRoomSessionTime!(
+                                            order!,
+                                            session,
+                                          ),
+                                    icon: const Icon(
+                                      Icons.schedule_outlined,
+                                      color: AppColors.green,
+                                      size: 19,
                                     ),
                                   ),
                                   IconButton(

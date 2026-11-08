@@ -12,6 +12,7 @@ class CafeSale {
     this.roomMinutes = 0,
     this.roomStartedAt,
     this.roomEndedAt,
+    this.note = '',
   });
   final int id;
   final String label;
@@ -23,6 +24,7 @@ class CafeSale {
   final int roomMinutes;
   final DateTime? roomStartedAt;
   final DateTime? roomEndedAt;
+  final String note;
 
   factory CafeSale.fromOrder({
     required int id,
@@ -63,6 +65,7 @@ class CafeSale {
       roomMinutes: roomMinutes,
       roomStartedAt: order.roomStartedAt,
       roomEndedAt: order.roomEndedAt ?? roomSessionEndedAt,
+      note: order.note,
     );
   }
 }

@@ -52,6 +52,7 @@ class CafeSidebar extends StatelessWidget {
             (3, Icons.restaurant_menu, 'المنيو'),
             (4, Icons.inventory_2_outlined, 'جرد'),
             (5, Icons.backup_outlined, 'النسخ الاحتياطي'),
+            (6, Icons.sticky_note_2_outlined, 'ملاحظات'),
           ])
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),

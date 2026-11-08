@@ -1,5 +1,7 @@
 import 'cafe_daily_closing.dart';
+import 'cafe_expense.dart';
 import 'cafe_order.dart';
+import 'cafe_note.dart';
 import 'cafe_product.dart';
 import 'cafe_sale.dart';
 
@@ -12,6 +14,9 @@ class CafeSnapshot {
     required this.tableCount,
     this.roomHourlyRates = const {},
     this.dailyClosings = const [],
+    this.expenses = const [],
+    this.placeNames = const {},
+    this.notes = const [],
   });
 
   final List<CafeOrder> orders;
@@ -21,4 +26,7 @@ class CafeSnapshot {
   final int tableCount;
   final Map<String, double> roomHourlyRates;
   final List<CafeDailyClosing> dailyClosings;
+  final List<CafeExpense> expenses;
+  final Map<String, String> placeNames;
+  final List<CafeNote> notes;
 }

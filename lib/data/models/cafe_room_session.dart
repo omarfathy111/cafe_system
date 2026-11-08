@@ -37,14 +37,17 @@ class CafeRoomSession {
     return (gross - discount).clamp(0, double.infinity);
   }
 
-  CafeRoomSession copyWith({DateTime? endedAt, double? discount}) =>
-      CafeRoomSession(
-        id: id,
-        mode: mode,
-        hourlyRate: hourlyRate,
-        startedAt: startedAt,
-        endedAt: endedAt ?? this.endedAt,
-        legacyFixedCharge: legacyFixedCharge,
-        discount: discount ?? this.discount,
-      );
+  CafeRoomSession copyWith({
+    DateTime? startedAt,
+    DateTime? endedAt,
+    double? discount,
+  }) => CafeRoomSession(
+    id: id,
+    mode: mode,
+    hourlyRate: hourlyRate,
+    startedAt: startedAt ?? this.startedAt,
+    endedAt: endedAt ?? this.endedAt,
+    legacyFixedCharge: legacyFixedCharge,
+    discount: discount ?? this.discount,
+  );
 }
