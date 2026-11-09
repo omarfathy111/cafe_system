@@ -25,7 +25,7 @@ class CafeDatabase {
     _database = await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 19,
+        version: 20,
         onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
         onCreate: _createSchema,
         onUpgrade: _upgradeSchema,
@@ -103,6 +103,7 @@ class CafeDatabase {
     await _createDailyClosingsTable(db);
     await _createExpensesTable(db);
     await _createNotesTable(db);
+    await _createCategoriesTable(db);
     for (final product in cafeProducts) {
       await db.insert('cafe_products', {
         'product_name': product.name,
@@ -344,6 +345,21 @@ class CafeDatabase {
         );
       }
     }
+    if (oldVersion < 20) {
+      await _createCategoriesTable(db);
+      await db.execute('''
+        INSERT OR IGNORE INTO cafe_categories (category_name)
+        SELECT DISTINCT category FROM cafe_products WHERE TRIM(category) != ''
+      ''');
+      await db.execute('''
+        UPDATE cafe_products SET stock_units = stock_units - COALESCE((
+          SELECT SUM(i.quantity) FROM cafe_order_items i
+          JOIN cafe_orders o ON o.id = i.order_id
+          WHERE o.status = 'open' AND i.product_name = cafe_products.product_name
+        ), 0)
+        WHERE stock_units IS NOT NULL
+      ''');
+    }
   }
 
   Future<void> _migrateSavedTableNotes(DatabaseExecutor db) async {
@@ -434,6 +450,26 @@ class CafeDatabase {
       created_at TEXT NOT NULL
     )
   ''');
+
+  Future<void> _createCategoriesTable(DatabaseExecutor db) async {
+    await db.execute('''CREATE TABLE IF NOT EXISTS cafe_categories (
+      category_name TEXT PRIMARY KEY
+    )''');
+    for (final category in [
+      'مشروبات ساخنة',
+      'قهوة',
+      'مشروبات باردة',
+      'عصائر',
+      'شيشة',
+      'سناكس',
+      'حلويات',
+      'أكلات',
+    ]) {
+      await db.insert('cafe_categories', {
+        'category_name': category,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    }
+  }
 
   Future<bool> _tableExists(DatabaseExecutor db, String tableName) async {
     final result = await db.rawQuery(

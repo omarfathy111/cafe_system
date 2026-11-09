@@ -6,14 +6,21 @@ import '../../data/models/cafe_product.dart';
 Future<CafeProduct?> showCafeProductEditor(
   BuildContext context, {
   CafeProduct? product,
+  List<String> categories = AppCategories.values,
 }) => showDialog<CafeProduct>(
   context: context,
-  builder: (_) => CafeProductEditorDialog(product: product),
+  builder: (_) =>
+      CafeProductEditorDialog(product: product, categories: categories),
 );
 
 class CafeProductEditorDialog extends StatefulWidget {
-  const CafeProductEditorDialog({super.key, this.product});
+  const CafeProductEditorDialog({
+    super.key,
+    this.product,
+    this.categories = AppCategories.values,
+  });
   final CafeProduct? product;
+  final List<String> categories;
 
   @override
   State<CafeProductEditorDialog> createState() =>
@@ -38,7 +45,7 @@ class _CafeProductEditorDialogState extends State<CafeProductEditorDialog> {
     _unitsPerCartonController = TextEditingController(
       text: product?.unitsPerCarton?.toString() ?? '',
     );
-    _category = product?.category ?? AppCategories.values[1];
+    _category = product?.category ?? widget.categories.first;
   }
 
   @override
@@ -60,10 +67,10 @@ class _CafeProductEditorDialogState extends State<CafeProductEditorDialog> {
         double.parse(_priceController.text.trim()),
         previous?.icon ?? Icons.local_cafe,
         stockUnits: previous?.stockUnits,
-        unitsPerCarton: previous!.tracksStock
+        unitsPerCarton: previous?.tracksStock == true
             ? int.tryParse(_unitsPerCartonController.text.trim())
-            : previous.unitsPerCarton,
-        purchasePricePerCarton: previous.purchasePricePerCarton,
+            : previous?.unitsPerCarton,
+        purchasePricePerCarton: previous?.purchasePricePerCarton,
       ),
     );
   }
@@ -90,8 +97,7 @@ class _CafeProductEditorDialogState extends State<CafeProductEditorDialog> {
               DropdownButtonFormField<String>(
                 initialValue: _category,
                 decoration: const InputDecoration(labelText: 'القسم'),
-                items: AppCategories.values
-                    .skip(1)
+                items: widget.categories
                     .map(
                       (category) => DropdownMenuItem(
                         value: category,

@@ -10,6 +10,7 @@ class CashierProductBrowser extends StatelessWidget {
     required this.searchController,
     required this.onSearchChanged,
     required this.category,
+    required this.categories,
     required this.onCategoryChanged,
     required this.products,
     required this.hasSelectedPlace,
@@ -22,6 +23,7 @@ class CashierProductBrowser extends StatelessWidget {
   final TextEditingController searchController;
   final ValueChanged<String> onSearchChanged;
   final String category;
+  final List<String> categories;
   final ValueChanged<String> onCategoryChanged;
   final List<CafeProduct> products;
   final bool hasSelectedPlace;
@@ -83,29 +85,13 @@ class CashierProductBrowser extends StatelessWidget {
           ),
         ),
       ),
-      SizedBox(
-        height: 43,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 22),
-          itemCount: AppCategories.values.length,
-          separatorBuilder: (_, _) => const SizedBox(width: 7),
-          itemBuilder: (context, index) {
-            final value = AppCategories.values[index];
-            final selected = value == category;
-            return ChoiceChip(
-              label: Text(value),
-              selected: selected,
-              showCheckmark: false,
-              selectedColor: AppColors.green,
-              backgroundColor: Colors.white,
-              labelStyle: TextStyle(
-                color: selected ? Colors.white : AppColors.ink,
-              ),
-              onSelected: (_) => onCategoryChanged(value),
-            );
-          },
-        ),
+      _CashierCategorySelector(
+        categories: [
+          ...AppCategories.values,
+          ...categories.where((item) => !AppCategories.values.contains(item)),
+        ],
+        selectedCategory: category,
+        onSelected: onCategoryChanged,
       ),
       const SizedBox(height: 8),
       Expanded(
@@ -129,5 +115,92 @@ class CashierProductBrowser extends StatelessWidget {
               ),
       ),
     ],
+  );
+}
+
+class _CashierCategorySelector extends StatefulWidget {
+  const _CashierCategorySelector({
+    required this.categories,
+    required this.selectedCategory,
+    required this.onSelected,
+  });
+
+  final List<String> categories;
+  final String selectedCategory;
+  final ValueChanged<String> onSelected;
+
+  @override
+  State<_CashierCategorySelector> createState() =>
+      _CashierCategorySelectorState();
+}
+
+class _CashierCategorySelectorState extends State<_CashierCategorySelector> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scroll(double distance) {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    final target = (_scrollController.offset + distance)
+        .clamp(position.minScrollExtent, position.maxScrollExtent)
+        .toDouble();
+    _scrollController.animateTo(
+      target,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: 52,
+    child: Row(
+      children: [
+        IconButton(
+          tooltip: 'تحريك الأقسام لليمين',
+          onPressed: () => _scroll(-260),
+          icon: const Icon(Icons.chevron_left),
+        ),
+        Expanded(
+          child: Scrollbar(
+            controller: _scrollController,
+            thumbVisibility: true,
+            child: ListView.separated(
+              controller: _scrollController,
+              scrollDirection: Axis.horizontal,
+              physics: const ClampingScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              itemCount: widget.categories.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 7),
+              itemBuilder: (context, index) {
+                final value = widget.categories[index];
+                final selected = value == widget.selectedCategory;
+                return ChoiceChip(
+                  label: Text(value),
+                  selected: selected,
+                  showCheckmark: false,
+                  selectedColor: AppColors.green,
+                  backgroundColor: Colors.white,
+                  labelStyle: TextStyle(
+                    color: selected ? Colors.white : AppColors.ink,
+                  ),
+                  onSelected: (_) => widget.onSelected(value),
+                );
+              },
+            ),
+          ),
+        ),
+        IconButton(
+          tooltip: 'تحريك الأقسام لليسار',
+          onPressed: () => _scroll(260),
+          icon: const Icon(Icons.chevron_right),
+        ),
+      ],
+    ),
   );
 }

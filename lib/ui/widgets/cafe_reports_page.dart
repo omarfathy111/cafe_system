@@ -6,6 +6,8 @@ import '../../core/constants/app_constants.dart';
 import '../../data/models/cafe_daily_closing.dart';
 import '../../data/models/cafe_expense.dart';
 import '../../data/models/cafe_sale.dart';
+import '../../data/models/cafe_sale_item.dart';
+import 'cafe_invoice_editor_dialog.dart';
 import 'cafe_page_heading.dart';
 import 'cashier_components.dart';
 
@@ -19,12 +21,26 @@ class CafeReportsPage extends StatefulWidget {
     this.expenses = const [],
     this.onAddExpense,
     this.canViewHistory = false,
+    this.onEditSale,
+    this.onDeleteSale,
+    this.onEditExpense,
+    this.onDeleteExpense,
   });
   final List<CafeSale> sales;
   final List<CafeDailyClosing> dailyClosings;
   final Future<void> Function(DateTime day) onCloseDay;
   final bool canCloseDay;
   final bool canViewHistory;
+  final Future<void> Function(
+    CafeSale sale,
+    List<CafeSaleItem> items,
+    String note,
+  )?
+  onEditSale;
+  final Future<bool> Function(CafeSale sale)? onDeleteSale;
+  final Future<void> Function(CafeExpense expense, double amount, String note)?
+  onEditExpense;
+  final Future<bool> Function(CafeExpense expense)? onDeleteExpense;
   final List<CafeExpense> expenses;
   final Future<CafeExpense> Function({
     required double amount,
@@ -39,6 +55,8 @@ class CafeReportsPage extends StatefulWidget {
 class _CafeReportsPageState extends State<CafeReportsPage> {
   DateTime? _selectedDay;
   int? _selectedClosingId;
+  final Set<int> _hiddenSaleIds = {};
+  final Set<int> _hiddenExpenseIds = {};
   Timer? _midnightRefresh;
 
   @override
@@ -120,13 +138,92 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
     }
   }
 
+  Future<void> _editInvoice(CafeSale sale) async {
+    final result = await showCafeInvoiceEditor(context, sale);
+    if (result != null && mounted) {
+      await widget.onEditSale?.call(sale, result.$1, result.$2);
+    }
+  }
+
+  Future<void> _deleteInvoice(CafeSale sale) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('حذف الفاتورة؟'),
+        content: Text(
+          'سيتم حذف فاتورة ${sale.label} بقيمة ${sale.total.toStringAsFixed(2)} ج.م وإرجاع أصناف المخزون المسجلة بها.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('رجوع'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _hiddenSaleIds.add(sale.id));
+    final deleted = await widget.onDeleteSale?.call(sale) ?? false;
+    if (!deleted && mounted) {
+      setState(() => _hiddenSaleIds.remove(sale.id));
+    }
+  }
+
+  Future<void> _editExpense(CafeExpense expense) async {
+    final result = await showDialog<(double, String)>(
+      context: context,
+      builder: (_) => _CafeExpenseDialog(expense: expense),
+    );
+    if (result != null && mounted) {
+      await widget.onEditExpense?.call(expense, result.$1, result.$2);
+    }
+  }
+
+  Future<void> _deleteExpense(CafeExpense expense) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('حذف المصروف؟'),
+        content: Text(
+          'سيتم حذف مصروف "${expense.note}" بقيمة ${expense.amount.toStringAsFixed(2)} ج.م.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('رجوع'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      setState(() => _hiddenExpenseIds.add(expense.id));
+      final deleted = await widget.onDeleteExpense?.call(expense) ?? false;
+      if (!deleted && mounted) {
+        setState(() => _hiddenExpenseIds.remove(expense.id));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final today = _dateOnly(now);
-    final visibleSales = widget.canViewHistory
-        ? widget.sales
-        : widget.sales.where((sale) => _dateOnly(sale.time) == today).toList();
+    final visibleSales =
+        (widget.canViewHistory
+                ? widget.sales
+                : widget.sales
+                      .where((sale) => _dateOnly(sale.time) == today)
+                      .toList())
+            .where((sale) => !_hiddenSaleIds.contains(sale.id))
+            .toList();
     final firstSale = visibleSales.isEmpty
         ? today
         : _dateOnly(
@@ -162,11 +259,16 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
       return sale.time.isAfter(periodStart) &&
           !sale.time.isAfter(selectedClosing.closedAt);
     }).toList();
-    final visibleExpenses = widget.canViewHistory
-        ? widget.expenses
-        : widget.expenses
-              .where((expense) => _dateOnly(expense.incurredAt) == today)
-              .toList();
+    final visibleExpenses =
+        (widget.canViewHistory
+                ? widget.expenses
+                : widget.expenses
+                      .where(
+                        (expense) => _dateOnly(expense.incurredAt) == today,
+                      )
+                      .toList())
+            .where((expense) => !_hiddenExpenseIds.contains(expense.id))
+            .toList();
     final selectedExpenses = visibleExpenses.where((expense) {
       if (_dateOnly(expense.incurredAt) != selectedDay) return false;
       if (selectedClosing == null) return true;
@@ -361,13 +463,49 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
                             subtitle: Text(
                               '${expense.incurredAt.hour.toString().padLeft(2, '0')}:${expense.incurredAt.minute.toString().padLeft(2, '0')}',
                             ),
-                            trailing: Text(
-                              '- ${expense.amount.toStringAsFixed(2)} ج.م',
-                              style: const TextStyle(
-                                color: Color(0xFFB3261E),
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            trailing: widget.canViewHistory
+                                ? Wrap(
+                                    //    MainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    children: [
+                                      Text(
+                                        '- ${expense.amount.toStringAsFixed(2)} ج.م',
+                                        style: const TextStyle(
+                                          color: Color(0xFFB3261E),
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'تعديل المصروف',
+                                        onPressed: widget.onEditExpense == null
+                                            ? null
+                                            : () => _editExpense(expense),
+                                        icon: const Icon(
+                                          Icons.edit_outlined,
+                                          color: AppColors.green,
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'حذف المصروف',
+                                        onPressed:
+                                            widget.onDeleteExpense == null
+                                            ? null
+                                            : () => _deleteExpense(expense),
+                                        icon: const Icon(
+                                          Icons.delete_outline,
+                                          color: Colors.redAccent,
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : Text(
+                                    '- ${expense.amount.toStringAsFixed(2)} ج.م',
+                                    style: const TextStyle(
+                                      color: Color(0xFFB3261E),
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                           ),
                         );
                       }
@@ -383,9 +521,37 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
                           subtitle: Text(
                             '${sale.time.hour.toString().padLeft(2, '0')}:${sale.time.minute.toString().padLeft(2, '0')} • ${sale.items.entries.map((item) => '${item.key} × ${item.value}').join('، ')}${sale.roomSessions.isNotEmpty || sale.roomStartedAt == null ? '' : ' • جلسة البلايستيشن: ${_formatTimestamp(sale.roomStartedAt!)} ← ${sale.roomEndedAt == null ? 'مستمرة' : _formatTimestamp(sale.roomEndedAt!)}'}${sale.note.isEmpty ? '' : ' • ملاحظة: ${sale.note}'}',
                           ),
-                          trailing: Text(
-                            '${sale.total.toStringAsFixed(0)} ج.م',
-                          ),
+                          trailing: widget.canViewHistory
+                              ? Wrap(
+                                  //   mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    Text(
+                                      '${sale.total.toStringAsFixed(0)} ج.م',
+                                    ),
+                                    IconButton(
+                                      tooltip: 'تعديل الفاتورة',
+                                      onPressed: widget.onEditSale == null
+                                          ? null
+                                          : () => _editInvoice(sale),
+                                      icon: const Icon(
+                                        Icons.edit_outlined,
+                                        color: AppColors.green,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'حذف الفاتورة',
+                                      onPressed: widget.onDeleteSale == null
+                                          ? null
+                                          : () => _deleteInvoice(sale),
+                                      icon: const Icon(
+                                        Icons.delete_outline,
+                                        color: Colors.redAccent,
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              : Text('${sale.total.toStringAsFixed(0)} ج.م'),
                         ),
                       );
                     },
@@ -401,7 +567,9 @@ class _CafeReportsPageState extends State<CafeReportsPage> {
 }
 
 class _CafeExpenseDialog extends StatefulWidget {
-  const _CafeExpenseDialog();
+  const _CafeExpenseDialog({this.expense});
+
+  final CafeExpense? expense;
 
   @override
   State<_CafeExpenseDialog> createState() => _CafeExpenseDialogState();
@@ -411,6 +579,16 @@ class _CafeExpenseDialogState extends State<_CafeExpenseDialog> {
   final _formKey = GlobalKey<FormState>();
   final _amountController = TextEditingController();
   final _noteController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    final expense = widget.expense;
+    if (expense != null) {
+      _amountController.text = expense.amount.toStringAsFixed(2);
+      _noteController.text = expense.note;
+    }
+  }
 
   @override
   void dispose() {
@@ -427,7 +605,7 @@ class _CafeExpenseDialogState extends State<_CafeExpenseDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('تسجيل مصروف'),
+    title: Text(widget.expense == null ? 'تسجيل مصروف' : 'تعديل المصروف'),
     content: Form(
       key: _formKey,
       child: SizedBox(

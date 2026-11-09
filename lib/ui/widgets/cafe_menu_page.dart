@@ -10,6 +10,8 @@ class CafeMenuPage extends StatelessWidget {
   const CafeMenuPage({
     super.key,
     required this.products,
+    this.categories = AppCategories.values,
+    this.onAddCategory,
     required this.onSaveProduct,
     this.onRenameProduct,
     required this.onDeactivateProduct,
@@ -20,6 +22,8 @@ class CafeMenuPage extends StatelessWidget {
   });
 
   final List<CafeProduct> products;
+  final List<String> categories;
+  final Future<void> Function(String name)? onAddCategory;
   final Future<void> Function(CafeProduct product) onSaveProduct;
   final Future<void> Function(String previousName, CafeProduct product)?
   onRenameProduct;
@@ -31,12 +35,19 @@ class CafeMenuPage extends StatelessWidget {
   final Future<void> Function(int number, String name)? onSaveRoomName;
 
   Future<void> _addProduct(BuildContext context) async {
-    final product = await showCafeProductEditor(context);
+    final product = await showCafeProductEditor(
+      context,
+      categories: categories,
+    );
     if (product != null) await onSaveProduct(product);
   }
 
   Future<void> _editProduct(BuildContext context, CafeProduct product) async {
-    final updated = await showCafeProductEditor(context, product: product);
+    final updated = await showCafeProductEditor(
+      context,
+      product: product,
+      categories: categories,
+    );
     if (updated != null) {
       if (updated.name != product.name && onRenameProduct != null) {
         await onRenameProduct!(product.name, updated);
@@ -79,6 +90,12 @@ class CafeMenuPage extends StatelessWidget {
         CafePageHeading(
           title: 'إدارة المنيو والأسعار',
           actions: [
+            if (onAddCategory != null)
+              OutlinedButton.icon(
+                onPressed: () => _addCategory(context),
+                icon: const Icon(Icons.create_new_folder_outlined),
+                label: const Text('إضافة قسم'),
+              ),
             FilledButton.icon(
               onPressed: () => _addProduct(context),
               icon: const Icon(Icons.add),
@@ -101,7 +118,7 @@ class CafeMenuPage extends StatelessWidget {
                   padding: EdgeInsets.all(20),
                   child: Center(child: Text('لا توجد أصناف في المنيو')),
                 ),
-              for (final category in AppCategories.values.skip(1))
+              for (final category in categories)
                 if (products.any(
                   (product) => product.category == category,
                 )) ...[
@@ -154,4 +171,34 @@ class CafeMenuPage extends StatelessWidget {
       ],
     ),
   );
+
+  Future<void> _addCategory(BuildContext context) async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('إضافة قسم جديد'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'اسم القسم'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, controller.text.trim()),
+            child: const Text('إضافة'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name != null && name.trim().isNotEmpty) {
+      await onAddCategory?.call(name.trim());
+    }
+  }
 }

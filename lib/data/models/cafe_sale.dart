@@ -1,4 +1,5 @@
 import 'cafe_order.dart';
+import 'cafe_sale_item.dart';
 
 class CafeSale {
   CafeSale({
@@ -13,6 +14,7 @@ class CafeSale {
     this.roomStartedAt,
     this.roomEndedAt,
     this.note = '',
+    this.saleItems = const [],
   });
   final int id;
   final String label;
@@ -25,6 +27,7 @@ class CafeSale {
   final DateTime? roomStartedAt;
   final DateTime? roomEndedAt;
   final String note;
+  final List<CafeSaleItem> saleItems;
 
   factory CafeSale.fromOrder({
     required int id,
@@ -66,6 +69,15 @@ class CafeSale {
       roomStartedAt: order.roomStartedAt,
       roomEndedAt: order.roomEndedAt ?? roomSessionEndedAt,
       note: order.note,
+      saleItems: [
+        for (final item in order.items)
+          CafeSaleItem(
+            productName: item.productName,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            discountPerUnit: item.discountPerUnit,
+          ),
+      ],
     );
   }
 }

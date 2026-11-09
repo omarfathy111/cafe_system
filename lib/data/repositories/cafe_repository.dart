@@ -15,6 +15,7 @@ import '../models/cafe_note.dart';
 import '../models/cafe_order.dart';
 import '../models/cafe_product.dart';
 import '../models/cafe_sale.dart';
+import '../models/cafe_sale_item.dart';
 import '../models/cafe_snapshot.dart';
 import '../models/default_cafe_products.dart';
 
@@ -92,6 +93,10 @@ class CafeRepository {
       'cafe_notes',
       orderBy: 'created_at DESC, id DESC',
     )).map(CafeNote.fromMap).toList();
+    final categories = (await db.query(
+      'cafe_categories',
+      orderBy: 'category_name',
+    )).map((row) => row['category_name'] as String).toList();
     final orderModels = <CafeOrder>[];
     for (final row in orders) {
       final id = row['id'] as String;
@@ -177,6 +182,16 @@ class CafeRepository {
               ? DateTime.tryParse(row['room_ended_at'] as String? ?? '')
               : roomSessions.last.endedAt,
           note: row['note'] as String? ?? '',
+          saleItems: [
+            for (final item in items)
+              CafeSaleItem(
+                productName: item['product_name'] as String,
+                quantity: item['quantity'] as int,
+                unitPrice: (item['unit_price'] as num).toDouble(),
+                discountPerUnit:
+                    (item['discount_per_unit'] as num?)?.toDouble() ?? 0,
+              ),
+          ],
         ),
       );
     }
@@ -222,12 +237,56 @@ class CafeRepository {
       expenses: expenses,
       placeNames: placeNames,
       notes: notes,
+      categories: categories,
     );
   }
 
   Future<void> saveOrder(CafeOrder order) async {
     final db = await _database.database;
     await db.transaction((txn) async {
+      final oldItems = await txn.query(
+        'cafe_order_items',
+        columns: ['product_name', 'quantity'],
+        where: 'order_id = ?',
+        whereArgs: [order.id],
+      );
+      final oldQuantities = <String, int>{};
+      for (final row in oldItems) {
+        final name = row['product_name'] as String;
+        oldQuantities.update(
+          name,
+          (value) => value + (row['quantity'] as int),
+          ifAbsent: () => row['quantity'] as int,
+        );
+      }
+      final newQuantities = <String, int>{};
+      for (final item in order.items) {
+        newQuantities.update(
+          item.productName,
+          (value) => value + item.quantity,
+          ifAbsent: () => item.quantity,
+        );
+      }
+      for (final name in {...oldQuantities.keys, ...newQuantities.keys}) {
+        final delta = (newQuantities[name] ?? 0) - (oldQuantities[name] ?? 0);
+        if (delta == 0) continue;
+        final rows = await txn.query(
+          'cafe_products',
+          columns: ['stock_units'],
+          where: 'product_name = ?',
+          whereArgs: [name],
+          limit: 1,
+        );
+        if (rows.isEmpty || rows.first['stock_units'] == null) continue;
+        final available = rows.first['stock_units'] as int;
+        if (delta > 0 && available < delta) {
+          throw StateError('الكمية المتاحة من $name هي $available فقط');
+        }
+        await txn.rawUpdate(
+          'UPDATE cafe_products SET stock_units = stock_units - ? WHERE product_name = ?',
+          [delta, name],
+        );
+      }
       await txn.insert('cafe_orders', {
         'id': order.id,
         'label': order.label,
@@ -288,9 +347,9 @@ class CafeRepository {
     });
   }
 
-  Future<void> completeSale(CafeOrder order) async {
+  Future<int> completeSale(CafeOrder order) async {
     final db = await _database.database;
-    await db.transaction((txn) async {
+    return db.transaction<int>((txn) async {
       final now = DateTime.now();
       final saleId = await txn.insert('cafe_sales', {
         'label': order.label,
@@ -327,25 +386,6 @@ class CafeRepository {
             : (product.first['unit_price'] as num).toDouble();
         final price = item.unitPrice > 0 ? item.unitPrice : catalogPrice;
         if (price == null) continue;
-        final stockRows = await txn.query(
-          'cafe_products',
-          columns: ['stock_units'],
-          where: 'product_name = ?',
-          whereArgs: [item.productName],
-          limit: 1,
-        );
-        if (stockRows.isNotEmpty && stockRows.first['stock_units'] != null) {
-          final available = stockRows.first['stock_units'] as int;
-          if (available < item.quantity) {
-            throw StateError(
-              'الكمية المتاحة من ${item.productName} هي $available فقط',
-            );
-          }
-          await txn.rawUpdate(
-            'UPDATE cafe_products SET stock_units = stock_units - ? WHERE product_name = ?',
-            [item.quantity, item.productName],
-          );
-        }
         await txn.insert('cafe_sale_items', {
           'sale_id': saleId,
           'product_name': item.productName,
@@ -355,6 +395,164 @@ class CafeRepository {
         });
       }
       await txn.delete('cafe_orders', where: 'id = ?', whereArgs: [order.id]);
+      return saleId;
+    });
+  }
+
+  Future<void> addCategory(String name) async {
+    final category = name.trim();
+    if (category.isEmpty || category == 'الكل') {
+      throw ArgumentError('اكتب اسم قسم صحيح');
+    }
+    final db = await _database.database;
+    await db.insert('cafe_categories', {
+      'category_name': category,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+  }
+
+  Future<void> updateSale({
+    required int id,
+    required List<CafeSaleItem> items,
+    required String note,
+  }) async {
+    if (items.any(
+      (item) =>
+          item.quantity <= 0 ||
+          !item.unitPrice.isFinite ||
+          item.unitPrice < item.discountPerUnit,
+    )) {
+      throw ArgumentError('تفاصيل أصناف الفاتورة غير صالحة');
+    }
+    final db = await _database.database;
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'cafe_sales',
+        columns: ['total', 'paid_at', 'room_charge'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (rows.isEmpty) throw StateError('الفاتورة غير موجودة');
+      final oldTotal = (rows.first['total'] as num).toDouble();
+      final paidAt = rows.first['paid_at'] as String;
+      final roomCharge = (rows.first['room_charge'] as num?)?.toDouble() ?? 0;
+      final newTotal =
+          roomCharge + items.fold<double>(0, (sum, item) => sum + item.total);
+
+      final oldRows = await txn.query(
+        'cafe_sale_items',
+        columns: ['product_name', 'quantity'],
+        where: 'sale_id = ?',
+        whereArgs: [id],
+      );
+      final oldQuantities = <String, int>{};
+      for (final row in oldRows) {
+        final name = row['product_name'] as String;
+        oldQuantities.update(
+          name,
+          (value) => value + (row['quantity'] as int),
+          ifAbsent: () => row['quantity'] as int,
+        );
+      }
+      final newQuantities = <String, int>{};
+      for (final item in items) {
+        newQuantities.update(
+          item.productName,
+          (value) => value + item.quantity,
+          ifAbsent: () => item.quantity,
+        );
+      }
+      for (final name in {...oldQuantities.keys, ...newQuantities.keys}) {
+        final delta = (newQuantities[name] ?? 0) - (oldQuantities[name] ?? 0);
+        if (delta == 0) continue;
+        final productRows = await txn.query(
+          'cafe_products',
+          columns: ['stock_units'],
+          where: 'product_name = ?',
+          whereArgs: [name],
+          limit: 1,
+        );
+        if (productRows.isEmpty || productRows.first['stock_units'] == null) {
+          continue;
+        }
+        final available = productRows.first['stock_units'] as int;
+        if (delta > 0 && available < delta) {
+          throw StateError('الكمية المتاحة من $name هي $available فقط');
+        }
+        await txn.rawUpdate(
+          'UPDATE cafe_products SET stock_units = stock_units - ? WHERE product_name = ?',
+          [delta, name],
+        );
+      }
+
+      await txn.delete(
+        'cafe_sale_items',
+        where: 'sale_id = ?',
+        whereArgs: [id],
+      );
+      for (final item in items) {
+        await txn.insert('cafe_sale_items', {
+          'sale_id': id,
+          'product_name': item.productName,
+          'quantity': item.quantity,
+          'unit_price': item.unitPrice,
+          'discount_per_unit': item.discountPerUnit,
+        });
+      }
+      await txn.update(
+        'cafe_sales',
+        {'total': newTotal, 'note': note.trim()},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      final delta = newTotal - oldTotal;
+      if (delta != 0) {
+        await txn.rawUpdate(
+          '''UPDATE cafe_daily_closings SET total = total + ?
+          WHERE id = (SELECT id FROM cafe_daily_closings
+            WHERE date_key = substr(?, 1, 10) AND closed_at >= ?
+            ORDER BY closed_at ASC LIMIT 1)''',
+          [delta, paidAt, paidAt],
+        );
+      }
+    });
+  }
+
+  Future<void> deleteSale(int id) async {
+    final db = await _database.database;
+    await db.transaction((txn) async {
+      final sales = await txn.query(
+        'cafe_sales',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (sales.isEmpty) return;
+      final total = (sales.first['total'] as num).toDouble();
+      final paidAt = sales.first['paid_at'] as String;
+      final items = await txn.query(
+        'cafe_sale_items',
+        where: 'sale_id = ?',
+        whereArgs: [id],
+      );
+      for (final item in items) {
+        final name = item['product_name'] as String;
+        final quantity = item['quantity'] as int;
+        await txn.rawUpdate(
+          '''UPDATE cafe_products SET stock_units = stock_units + ?
+          WHERE product_name = ? AND stock_units IS NOT NULL''',
+          [quantity, name],
+        );
+      }
+      await txn.rawUpdate(
+        '''UPDATE cafe_daily_closings
+        SET total = total - ?, invoice_count = MAX(0, invoice_count - 1)
+        WHERE id = (SELECT id FROM cafe_daily_closings
+          WHERE date_key = substr(?, 1, 10) AND closed_at >= ?
+          ORDER BY closed_at ASC LIMIT 1)''',
+        [total, paidAt, paidAt],
+      );
+      await txn.delete('cafe_sales', where: 'id = ?', whereArgs: [id]);
     });
   }
 
@@ -643,6 +841,70 @@ class CafeRepository {
       note: normalizedNote,
       incurredAt: incurredAt,
     );
+  }
+
+  Future<void> updateExpense({
+    required int id,
+    required double amount,
+    required String note,
+  }) async {
+    final normalizedNote = note.trim();
+    if (!amount.isFinite || amount <= 0 || normalizedNote.isEmpty) {
+      throw ArgumentError('أدخل مبلغًا صحيحًا ووصفًا للمصروف');
+    }
+    final db = await _database.database;
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'cafe_expenses',
+        columns: ['amount', 'incurred_at'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (rows.isEmpty) throw StateError('المصروف غير موجود');
+      final oldAmount = (rows.first['amount'] as num).toDouble();
+      final incurredAt = rows.first['incurred_at'] as String;
+      await txn.update(
+        'cafe_expenses',
+        {'amount': amount, 'note': normalizedNote},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      final delta = amount - oldAmount;
+      if (delta != 0) {
+        await txn.rawUpdate(
+          '''UPDATE cafe_daily_closings SET total = total - ?
+          WHERE id = (SELECT id FROM cafe_daily_closings
+            WHERE date_key = substr(?, 1, 10) AND closed_at >= ?
+            ORDER BY closed_at ASC LIMIT 1)''',
+          [delta, incurredAt, incurredAt],
+        );
+      }
+    });
+  }
+
+  Future<void> deleteExpense(int id) async {
+    final db = await _database.database;
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'cafe_expenses',
+        columns: ['amount', 'incurred_at'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (rows.isEmpty) return;
+      final amount = (rows.first['amount'] as num).toDouble();
+      final incurredAt = rows.first['incurred_at'] as String;
+      await txn.rawUpdate(
+        '''UPDATE cafe_daily_closings SET total = total + ?
+        WHERE id = (SELECT id FROM cafe_daily_closings
+          WHERE date_key = substr(?, 1, 10) AND closed_at >= ?
+          ORDER BY closed_at ASC LIMIT 1)''',
+        [amount, incurredAt, incurredAt],
+      );
+      await txn.delete('cafe_expenses', where: 'id = ?', whereArgs: [id]);
+    });
   }
 
   Future<void> setProductActive(String name, bool active) async {

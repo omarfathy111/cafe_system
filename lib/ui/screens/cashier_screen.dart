@@ -10,19 +10,20 @@ import '../../data/models/cafe_note.dart';
 import '../../data/models/cafe_order.dart';
 import '../../data/models/cafe_product.dart';
 import '../../data/models/cafe_sale.dart';
+import '../../data/models/cafe_sale_item.dart';
 import '../../data/repositories/cafe_repository.dart';
-import '../widgets/cashier_components.dart';
-import '../widgets/cafe_pages.dart';
-import '../widgets/cafe_place_widgets.dart';
-import '../widgets/cashier_product_browser.dart';
-import '../widgets/cafe_order_panel.dart';
-import '../widgets/cafe_order_dialogs.dart';
-import '../widgets/cafe_backup_page.dart';
 import '../widgets/admin_password_dialog.dart';
-import '../widgets/cafe_room_booking_dialog.dart';
+import '../widgets/cafe_backup_page.dart';
 import '../widgets/cafe_discount_dialog.dart';
 import '../widgets/cafe_inventory_page.dart';
 import '../widgets/cafe_notes_page.dart';
+import '../widgets/cafe_order_dialogs.dart';
+import '../widgets/cafe_order_panel.dart';
+import '../widgets/cafe_pages.dart';
+import '../widgets/cafe_place_widgets.dart';
+import '../widgets/cafe_room_booking_dialog.dart';
+import '../widgets/cashier_components.dart';
+import '../widgets/cashier_product_browser.dart';
 
 class CashierScreen extends StatefulWidget {
   const CashierScreen({super.key});
@@ -41,6 +42,7 @@ class _CashierScreenState extends State<CashierScreen> {
   final List<CafeDailyClosing> _dailyClosings = [];
   final List<CafeExpense> _expenses = [];
   final List<CafeNote> _notes = [];
+  final List<String> _categories = [...AppCategories.values.skip(1)];
   final Map<String, double> _roomHourlyRates = {};
   final Map<String, String> _placeNames = {};
   int _tableCount = 16;
@@ -136,6 +138,9 @@ class _CashierScreenState extends State<CashierScreen> {
         _notes
           ..clear()
           ..addAll(snapshot.notes);
+        _categories
+          ..clear()
+          ..addAll({...AppCategories.values.skip(1), ...snapshot.categories});
         _roomHourlyRates
           ..clear()
           ..addAll(snapshot.roomHourlyRates);
@@ -160,8 +165,11 @@ class _CashierScreenState extends State<CashierScreen> {
         .catchError((Object _) {})
         .then((_) => _repository.saveOrder(snapshot));
     _pendingWrites = write;
-    return write.catchError((Object error) {
-      if (mounted) _snack('تعذر حفظ الطلب: $error');
+    return write.catchError((Object error) async {
+      if (mounted) {
+        _snack('تعذر حفظ الطلب: $error');
+        await _load();
+      }
     });
   }
 
@@ -177,10 +185,27 @@ class _CashierScreenState extends State<CashierScreen> {
           _products[index] = product;
         }
         _products.sort((first, second) => first.name.compareTo(second.name));
+        if (!_categories.contains(product.category)) {
+          _categories.add(product.category);
+        }
       });
       _snack('تم حفظ ${product.name} في المنيو');
     } catch (error) {
       _snack('تعذر حفظ الصنف: $error');
+    }
+  }
+
+  Future<void> _addCategory(String name) async {
+    try {
+      await _repository.addCategory(name);
+      if (!mounted) return;
+      setState(() {
+        if (!_categories.contains(name.trim())) _categories.add(name.trim());
+        _categories.sort();
+      });
+      _snack('تمت إضافة القسم');
+    } catch (error) {
+      _snack('تعذرت إضافة القسم: $error');
     }
   }
 
@@ -436,6 +461,69 @@ class _CashierScreenState extends State<CashierScreen> {
     return expense;
   }
 
+  Future<void> _editSale(
+    CafeSale sale,
+    List<CafeSaleItem> items,
+    String note,
+  ) async {
+    try {
+      await _repository.updateSale(id: sale.id, items: items, note: note);
+      await _load();
+      if (mounted) _snack('تم تعديل الفاتورة');
+    } catch (error) {
+      _snack('تعذر تعديل الفاتورة: $error');
+    }
+  }
+
+  Future<void> _editExpense(
+    CafeExpense expense,
+    double amount,
+    String note,
+  ) async {
+    try {
+      await _repository.updateExpense(
+        id: expense.id,
+        amount: amount,
+        note: note,
+      );
+      await _load();
+      if (mounted) _snack('تم تعديل المصروف');
+    } catch (error) {
+      _snack('تعذر تعديل المصروف: $error');
+    }
+  }
+
+  Future<bool> _deleteExpense(CafeExpense expense) async {
+    try {
+      await _repository.deleteExpense(expense.id);
+      if (mounted) {
+        setState(() => _expenses.removeWhere((item) => item.id == expense.id));
+      }
+      await _load();
+      if (mounted) _snack('تم حذف المصروف وتحديث اليومية');
+      return true;
+    } catch (error) {
+      _snack('تعذر حذف المصروف: $error');
+      return false;
+    }
+  }
+
+  Future<bool> _deleteSale(CafeSale sale) async {
+    try {
+      await _pendingWrites.catchError((Object _) {});
+      await _repository.deleteSale(sale.id);
+      if (mounted) {
+        setState(() => _sales.removeWhere((item) => item.id == sale.id));
+      }
+      await _load();
+      if (mounted) _snack('تم حذف الفاتورة وإرجاع أصناف المخزون');
+      return true;
+    } catch (error) {
+      _snack('تعذر حذف الفاتورة: $error');
+      return false;
+    }
+  }
+
   Future<void> _restoreBackup(File backup) async {
     await _pendingWrites;
     await _repository.restoreBackup(backup);
@@ -511,6 +599,7 @@ class _CashierScreenState extends State<CashierScreen> {
     } else {
       order.items.add(variant);
     }
+    if (product.tracksStock) _adjustLocalStock(product.name, -1);
     setState(() {});
     _persistOrder(order);
   }
@@ -540,6 +629,7 @@ class _CashierScreenState extends State<CashierScreen> {
         quantity: order.items[index].quantity + 1,
       );
     }
+    if (stone.tracksStock) _adjustLocalStock(stone.name, -1);
     setState(() {});
     _persistOrder(order);
   }
@@ -563,20 +653,33 @@ class _CashierScreenState extends State<CashierScreen> {
     } else {
       order.items[index] = existing.copyWith(quantity: quantity);
     }
+    final product = _products
+        .where((item) => item.name == existing.productName)
+        .firstOrNull;
+    if (product?.tracksStock == true) {
+      _adjustLocalStock(existing.productName, -delta);
+    }
     setState(() {});
     _persistOrder(order);
   }
 
   bool _hasStockFor(CafeProduct product, int requested) {
-    final reserved = _orders.fold<int>(
-      0,
-      (sum, order) =>
-          sum +
-          order.items
-              .where((item) => item.productName == product.name)
-              .fold<int>(0, (quantity, item) => quantity + item.quantity),
+    return (product.stockUnits ?? 0) >= requested;
+  }
+
+  void _adjustLocalStock(String name, int delta) {
+    final index = _products.indexWhere((product) => product.name == name);
+    if (index < 0 || !_products[index].tracksStock) return;
+    final product = _products[index];
+    _products[index] = CafeProduct(
+      product.name,
+      product.category,
+      product.price,
+      product.icon,
+      stockUnits: (product.stockUnits ?? 0) + delta,
+      unitsPerCarton: product.unitsPerCarton,
+      purchasePricePerCarton: product.purchasePricePerCarton,
     );
-    return (product.stockUnits ?? 0) - reserved >= requested;
   }
 
   Future<void> _changeItemDiscount(CafeOrder order, CafeOrderItem item) async {
@@ -658,34 +761,13 @@ class _CashierScreenState extends State<CashierScreen> {
     if (confirm != true) return;
     try {
       await _pendingWrites;
-      await _repository.completeSale(settledOrder);
+      final saleId = await _repository.completeSale(settledOrder);
       if (!mounted) return;
       setState(() {
         _orders.remove(order);
-        for (final item in settledOrder.items) {
-          final productIndex = _products.indexWhere(
-            (product) =>
-                product.name == item.productName && product.tracksStock,
-          );
-          if (productIndex < 0) continue;
-          final product = _products[productIndex];
-          _products[productIndex] = CafeProduct(
-            product.name,
-            product.category,
-            product.price,
-            product.icon,
-            stockUnits: (product.stockUnits ?? 0) - item.quantity,
-            unitsPerCarton: product.unitsPerCarton,
-            purchasePricePerCarton: product.purchasePricePerCarton,
-          );
-        }
         _sales.insert(
           0,
-          CafeSale.fromOrder(
-            id: DateTime.now().microsecondsSinceEpoch,
-            order: settledOrder,
-            time: settledAt,
-          ),
+          CafeSale.fromOrder(id: saleId, order: settledOrder, time: settledAt),
         );
         if (_selectedTable == order.tableNumber) _selectedTable = null;
         if (_selectedRoom == order.roomNumber) _selectedRoom = null;
@@ -1021,6 +1103,7 @@ class _CashierScreenState extends State<CashierScreen> {
 
   Future<void> _tableSettings() async {
     if (!await _requireAdmin()) return;
+    if (!mounted) return;
     var count = _tableCount;
     final minimumCount = _orders
         .where((order) => order.tableNumber != null)
@@ -1159,9 +1242,21 @@ class _CashierScreenState extends State<CashierScreen> {
                               onCloseDay: _closeDaily,
                               canCloseDay: true,
                               canViewHistory: _adminUnlocked,
+                              onEditSale: _adminUnlocked ? _editSale : null,
+                              onDeleteSale: _adminUnlocked ? _deleteSale : null,
+                              onEditExpense: _adminUnlocked
+                                  ? _editExpense
+                                  : null,
+                              onDeleteExpense: _adminUnlocked
+                                  ? _deleteExpense
+                                  : null,
                             ),
                             3 => CafeMenuPage(
                               products: _products,
+                              categories: _categories,
+                              onAddCategory: _adminUnlocked
+                                  ? _addCategory
+                                  : null,
                               onSaveProduct: _saveProduct,
                               onRenameProduct: _renameProduct,
                               onDeactivateProduct: _deactivateProduct,
@@ -1257,6 +1352,7 @@ class _CashierScreenState extends State<CashierScreen> {
     searchController: _searchController,
     onSearchChanged: (value) => setState(() => _search = value.trim()),
     category: _category,
+    categories: _categories,
     onCategoryChanged: (value) => setState(() => _category = value),
     products: _visibleProducts,
     hasSelectedPlace: _hasSelectedPlace,

@@ -1,7 +1,7 @@
 import 'cafe_daily_closing.dart';
 import 'cafe_expense.dart';
-import 'cafe_order.dart';
 import 'cafe_note.dart';
+import 'cafe_order.dart';
 import 'cafe_product.dart';
 import 'cafe_sale.dart';
 
@@ -17,6 +17,7 @@ class CafeSnapshot {
     this.expenses = const [],
     this.placeNames = const {},
     this.notes = const [],
+    this.categories = const [],
   });
 
   final List<CafeOrder> orders;
@@ -29,4 +30,5 @@ class CafeSnapshot {
   final List<CafeExpense> expenses;
   final Map<String, String> placeNames;
   final List<CafeNote> notes;
+  final List<String> categories;
 }

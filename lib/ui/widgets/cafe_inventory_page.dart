@@ -148,7 +148,9 @@ class _CafeInventoryPageState extends State<CafeInventoryPage> {
       context: context,
       builder: (context) => const _StockProductDialog(),
     );
-    if (result != null) await widget.onAddStockProduct(result);
+    if (result != null) {
+      await widget.onAddStockProduct(result);
+    }
   }
 
   Future<void> _editProduct(CafeProduct product) async {
@@ -156,8 +158,9 @@ class _CafeInventoryPageState extends State<CafeInventoryPage> {
       context: context,
       builder: (_) => _StockProductDialog(product: product),
     );
-    if (updated != null)
+    if (updated != null) {
       await widget.onEditStockProduct?.call(product, updated);
+    }
   }
 
   Future<void> _restock(CafeProduct product) async {
