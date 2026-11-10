@@ -3,22 +3,22 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:cafe_system/core/database/app_database.dart';
-import 'package:cafe_system/features/inventory/data/cafe_inventory_total.dart';
-import 'package:cafe_system/features/orders_history/data/cafe_sale.dart';
-import 'package:cafe_system/features/orders_history/data/cafe_sale_item.dart';
-import 'package:cafe_system/features/pos/data/cafe_order.dart';
-import 'package:cafe_system/features/pos/data/cafe_snapshot.dart';
-import 'package:cafe_system/features/products/data/cafe_product.dart';
-import 'package:cafe_system/features/products/data/default_cafe_products.dart';
-import 'package:cafe_system/features/reports/data/cafe_daily_closing.dart';
-import 'package:cafe_system/features/reports/data/cafe_expense.dart';
-import 'package:cafe_system/features/settings/data/cafe_note.dart';
+import 'package:cafe_system/models/cafe_daily_closing.dart';
+import 'package:cafe_system/models/cafe_expense.dart';
+import 'package:cafe_system/models/cafe_inventory_total.dart';
+import 'package:cafe_system/models/cafe_note.dart';
+import 'package:cafe_system/models/cafe_order.dart';
+import 'package:cafe_system/models/cafe_product.dart';
+import 'package:cafe_system/models/cafe_sale.dart';
+import 'package:cafe_system/models/cafe_sale_item.dart';
+import 'package:cafe_system/models/cafe_snapshot.dart';
+import 'package:cafe_system/models/default_cafe_products.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-export 'package:cafe_system/features/pos/data/cafe_snapshot.dart';
+export 'package:cafe_system/models/cafe_snapshot.dart';
 
 class CafeRepository {
   CafeRepository({CafeDatabase? database})

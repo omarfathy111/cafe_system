@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:cafe_system/features/products/data/default_cafe_products.dart';
+import 'package:cafe_system/models/default_cafe_products.dart';
 import 'package:path/path.dart' as path;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 

@@ -1,5 +1,5 @@
-import 'package:cafe_system/features/settings/data/cafe_note.dart';
-import 'package:cafe_system/features/settings/ui/cafe_notes_page.dart';
+import 'package:cafe_system/models/cafe_note.dart';
+import 'package:cafe_system/ui/screens/settings/cafe_notes_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

@@ -1,4 +1,4 @@
-import 'package:cafe_system/features/pos/ui/cashier_screen.dart';
+import 'package:cafe_system/ui/screens/cashier/cashier_screen.dart';
 import 'package:flutter/material.dart';
 
 void main() {
