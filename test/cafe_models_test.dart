@@ -1,7 +1,7 @@
-import 'package:cafe_system/data/models/cafe_note.dart';
-import 'package:cafe_system/data/models/cafe_order.dart';
-import 'package:cafe_system/data/models/cafe_product.dart';
-import 'package:cafe_system/data/models/cafe_sale.dart';
+import 'package:cafe_system/features/orders_history/data/cafe_sale.dart';
+import 'package:cafe_system/features/pos/data/cafe_order.dart';
+import 'package:cafe_system/features/products/data/cafe_product.dart';
+import 'package:cafe_system/features/settings/data/cafe_note.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
